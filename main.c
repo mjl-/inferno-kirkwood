@@ -36,7 +36,7 @@ delay(void)
 	int i;
 
 	i = 0;
-	while(i < (1<<18))
+	while(i < (1<<17))
 		i++;
 }
 
@@ -57,19 +57,71 @@ puts(char *s)
 		putc(*s++);
 }
 
+uchar
+hex(ulong v)
+{
+	v &= 0xf;
+	if(v <= 9)
+		return '0'+v;
+	return 'a'-10+v;
+}
+
+void
+putul(ulong v)
+{
+	char buf[] = "0x33221100 ";
+	uchar *p;
+
+	p = (uchar*)buf+2;
+	*p++ = hex(v>>28);
+	*p++ = hex(v>>24);
+	*p++ = hex(v>>20);
+	*p++ = hex(v>>16);
+	*p++ = hex(v>>12);
+	*p++ = hex(v>>8);
+	*p++ = hex(v>>4);
+	*p++ = hex(v>>0);
+
+	puts(buf);
+}
+
 void
 main(void)
 {
+	IntrReg *intr = INTRREG;
+	CpucsReg *cpucs = CPUCSREG;
+	TimerReg *tmr = TIMERREG;
+
 	memset(edata, 0, end-edata);	/* clear bss */
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
 
-	for(;;)
-		puts("Inferno!\r\n");
+	puts("before trapinit\r\n");
+	trapinit();
+	puts("before clockinit\r\n");
+	clockinit();
 
-	/* eat power */
+	puts("waiting\r\n");
+	spllo();
+
+	/* wait */
 	for(;;)
 		;
+
+	/* xxx debug prints */
+	for(;;) {
+		putul(intr->lo.irq);
+		//putul(intr->lo.irqmask);
+		putul(cpucs->irq);
+		//putul(cpucs->irqmask);
+		putul(tmr->timer0);
+		putul(tmr->ctl);
+		putul(cpsrr());
+		putul(spsrr());
+		puts("\r\n");
+		//cpucs->irq = 0;
+		//intr->lo.irq = 0;
+	}
 
 	quotefmtinstall();
 	archreset();

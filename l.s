@@ -1,18 +1,131 @@
 #include "mem.h"
 
 /*
- * what's the state when we get here?  i.e. what does u-boot set up for us?
+ * what's the state when we get here, what u-boot set up?
  * i'm guessing:  no interrupts, no caches
  */
 
 TEXT _startup(SB), $-4
 	MOVW	$setR12(SB), R12
+
+	MOVW	$(PsrDirq|PsrDfiq|PsrMsvc), R1	/* ensure svc mode, no interrupts */
+	MOVW	R1, CPSR
+
 	MOVW	$(MACHADDR+KSTACK-4), R13
-	/* xxx MOVW	R1, CPSR */
-	BL	main(SB)
+
+	BL	main(SB)	/* jump to kernel */
 dead:
 	B	dead
 	BL	_div(SB)	/* hack to get _div etc loaded */
+
+/* set stack pointer for given mode */
+TEXT setr13(SB), $-4
+	MOVW		4(FP), R1
+
+	MOVW		CPSR, R2
+	BIC		$PsrMask, R2, R3
+	ORR		R0, R3
+	MOVW		R3, CPSR
+
+	MOVW		R13, R0
+	MOVW		R1, R13
+
+	MOVW		R2, CPSR
+	RET
+
+TEXT vectors(SB), $-4
+	MOVW	0x18(R15), R15			/* reset */
+	MOVW	0x18(R15), R15			/* undefined */
+	MOVW	0x18(R15), R15			/* SWI */
+	MOVW	0x18(R15), R15			/* prefetch abort */
+	MOVW	0x18(R15), R15			/* data abort */
+	MOVW	0x18(R15), R15			/* reserved */
+	MOVW	0x18(R15), R15			/* IRQ */
+	MOVW	0x18(R15), R15			/* FIQ */
+
+TEXT vtable(SB), $-4
+	WORD	$_vsvc(SB)			/* reset, in svc mode already */
+	WORD	$_vund(SB)			/* undefined, switch to svc mode */
+	WORD	$_vsvc(SB)			/* swi, in svc mode already */
+	WORD	$_vpab(SB)			/* prefetch abort, switch to svc mode */
+	WORD	$_vdab(SB)			/* data abort, switch to svc mode */
+	WORD	$_vsvc(SB)			/* reserved */
+	WORD	$_virq(SB)			/* IRQ, switch to svc mode */
+	WORD	$_vfiq(SB)			/* FIQ, switch to svc mode */
+
+TEXT _vund(SB), $-4
+	MOVM.DB		[R0-R3], (R13)
+	MOVW		$PsrMund, R0
+	B		_vswitch
+
+TEXT _vsvc(SB), $-4
+	MOVW.W		R14, -4(R13)
+	MOVW		CPSR, R14
+	MOVW.W		R14, -4(R13)
+	BIC		$PsrMask, R14
+	ORR		$(PsrDirq|PsrDfiq|PsrMsvc), R14
+	MOVW		R14, CPSR
+	MOVW		$PsrMsvc, R14
+	MOVW.W		R14, -4(R13)
+	B		_vsaveu
+
+TEXT _vpab(SB), $-4
+	MOVM.DB		[R0-R3], (R13)
+	MOVW		$PsrMabt, R0
+	B		_vswitch
+
+TEXT _vdab(SB), $-4
+	MOVM.DB		[R0-R3], (R13)
+	MOVW		$(PsrMabt+1), R0
+	B		_vswitch
+
+TEXT _vfiq(SB), $-4				/* FIQ */
+	MOVM.DB		[R0-R3], (R13)
+	MOVW		$PsrMfiq, R0
+	B		_vswitch
+
+TEXT _virq(SB), $-4				/* IRQ */
+	MOVM.DB		[R0-R3], (R13)
+	MOVW		$PsrMirq, R0
+
+_vswitch:					/* switch to svc mode */
+	MOVW		SPSR, R1
+	MOVW		R14, R2
+	MOVW		R13, R3
+
+	MOVW		CPSR, R14
+	BIC		$PsrMask, R14
+	ORR		$(PsrDirq|PsrDfiq|PsrMsvc), R14
+	MOVW		R14, CPSR
+
+	MOVM.DB.W	[R0-R2], (R13)
+	MOVM.DB		(R3), [R0-R3]
+
+_vsaveu:						/* Save Registers */
+	MOVW.W		R14, -4(R13)			/* save link */
+
+	SUB		$8, R13
+	MOVM.DB.W	[R0-R12], (R13)
+
+	MOVW		R0, R0				/* gratuitous noop */
+
+	MOVW		$setR12(SB), R12		/* static base (SB) */
+	MOVW		R13, R0				/* argument is ureg */
+	SUB		$8, R13				/* space for arg+lnk*/
+	BL		trap(SB)
+
+_vrfe:							/* Restore Regs */
+	MOVW		CPSR, R0			/* splhi on return */
+	ORR		$(PsrDirq|PsrDfiq), R0, R1
+	MOVW		R1, CPSR
+	ADD		$(8+4*15), R13		/* [r0-R14]+argument+link */
+	MOVW		(R13), R14			/* restore link */
+	MOVW		8(R13), R0
+	MOVW		R0, SPSR
+	MOVM.DB.S	(R13), [R0-R14]		/* restore user registers */
+	MOVW		R0, R0				/* gratuitous nop */
+	ADD		$12, R13		/* skip saved link+type+SPSR*/
+	RFE					/* MOVM.IA.S.W (R13), [R15] */
 
 
 TEXT getcallerpc(SB), $-4
@@ -39,8 +152,6 @@ TEXT gotolabel(SB), $-4
 
 
 /* xxx have to fill this in */
-#define PsrDirq 1
-#define PsrDfiq 2
 TEXT splhi(SB), $-4
 	MOVW	CPSR, R0
 	ORR	$(PsrDirq), R0, R1
@@ -84,4 +195,12 @@ TEXT splflo(SB), $-4
 	MOVW	CPSR, R0
 	BIC	$(PsrDfiq), R0, R1
 	MOVW	R1, CPSR
+	RET
+
+TEXT cpsrr(SB), $-4
+	MOVW		CPSR, R0
+	RET
+
+TEXT spsrr(SB), $-4
+	MOVW		SPSR, R0
 	RET

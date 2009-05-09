@@ -1,6 +1,7 @@
 enum {
 	Intrbase =	0xf1000000,
-	AddrIntr =	Intrbase+0x20200, /* xxx correct? */
+	AddrCpucsr =	Intrbase+0x20100,
+	AddrIntr =	Intrbase+0x20200,
 	AddrTimer =	Intrbase+0x20300,
 	AddrUart0 =	Intrbase+0x12000,
 	AddrUart1 =	Intrbase+0x12100,
@@ -9,6 +10,39 @@ enum {
 	AddrDeviceid =	Intrbase+0x10034,
 	AddrClockctl =	Intrbase+0x1004c,
 	AddrIocfg0 =	Intrbase+0x100e0,
+};
+
+enum {
+	IRQcpuself,
+	IRQcputimer0,
+	IRQcputimer1,
+	IRQcputimerwd,
+};
+
+#define CPUCSREG	((CpucsReg*)AddrCpucsr)
+typedef struct CpucsReg CpucsReg;
+struct CpucsReg
+{
+	ulong	cpucfg;
+	ulong	cpucsr;
+	ulong	rstout;
+	ulong	softreset;
+	ulong	irq;
+	ulong	irqmask;
+	ulong	mempm;
+	ulong	clockgate;
+	ulong	biu;
+	ulong	pad0;
+	ulong	l2cfg;
+	ulong	pad1[2];
+	ulong	l2tm0;
+	ulong	l2tm1;
+	ulong	pad2[2];
+	ulong	l2pm;
+	ulong	ram0;
+	ulong	ram1;
+	ulong	ram2;
+	ulong	ram3;
 };
 
 enum {
@@ -44,10 +78,8 @@ enum {
 	IRQ0twsi,
 	IRQ0avb,
 	IRQ0tdm,
-};
 
-enum {
-	_IRQ1reserved0,
+	_IRQ1reserved0 = 0,
 	IRQ1uart0,
 	IRQ1uart1,
 	IRQ1gpiolo0,
@@ -85,6 +117,15 @@ struct IntrReg
 };
 
 
+enum {
+	Tmr0enable	= 1<<0,
+	Tmr0periodic	= 1<<1,
+	Tmr1enable	= 1<<2,
+	Tmr1periodic	= 1<<3,
+	TmrWDenable	= 1<<4,
+	TmrWDperiodic	= 1<<5,
+};
+
 #define TIMERREG	((TimerReg*)AddrTimer)
 typedef struct TimerReg TimerReg;
 struct TimerReg
@@ -95,13 +136,12 @@ struct TimerReg
 	ulong	timer0;
 	ulong	reload1;
 	ulong	timer1;
-	ulong	watchreload;
-	ulong	watchtimer;
+	ulong	reloadwd;
+	ulong	timerwd;
 };
 
 
 enum {
-
 	IRRintrmask	= (1<<4)-1,
 	IRRnointr	= 1,
 	IRRthrempty	= 2,

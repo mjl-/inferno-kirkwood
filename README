@@ -1,7 +1,11 @@
 # status
 
-only thing the kernel does is continuously write to the uart (no
-interrupts).
+one clock is set up, a few interrupts come in (it prints a line),
+then it crashes.
+
+next steps:
+- handle clock interrupts reliably
+- get uart working properly, with interrupts
 
 
 # intro
@@ -18,7 +22,7 @@ make sure the contents of this directory are available in
 $ROOT/os/kirkwood/.
 
 to compile a kernel, "mk install".  this will create "uisheeva" and
-"uisheeva.gz" (the same kernels, but one is compressed).  this are
+"uisheeva.gz" (the same kernels, but one is compressed).  these are
 in the "uimage" format, as expected by the sheeva's u-boot.
 
 for compiling a kernel, the program "mkuimage" is needed.  build &
