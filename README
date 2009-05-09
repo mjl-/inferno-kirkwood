@@ -31,4 +31,8 @@ install it it by "cd mkuimage && mk install".
 
 # licence
 
-the same as the other inferno-os code.
+the kernel code is released under the same licence as the inferno-os
+code.
+
+mkuimage is public domain, written by mechiel lukkien, reachable
+at mechiel@ueber.net or mechiel@xs4all.nl.

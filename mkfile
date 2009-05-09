@@ -40,7 +40,7 @@ KERNDATE=`{$NDATE}
 
 default:V: i$CONF ui$CONF ui$CONF.gz
 
-install:V: $INSTALLDIR/i$CONF $INSTALLDIR/i$CONF
+install:V: $INSTALLDIR/i$CONF $INSTALLDIR/i$CONF $INSTALLDIR/ui$CONF $INSTALLDIR/ui$CONF.gz
 
 inst:V: default
 	vers=`date +%s`
