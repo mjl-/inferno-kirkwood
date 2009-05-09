@@ -1,0 +1,76 @@
+dev
+	root
+	cons
+	env
+	mnt
+	pipe
+	prog
+	srv
+	dup
+	uart
+
+lib
+	interp
+	math
+	kern
+	sec
+
+misc
+	uartkirkwood
+
+mod
+	math
+	sys
+
+port
+	alarm
+	alloc
+	allocb
+	chan
+	dev
+	dial
+	dis
+	discall
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+	random
+	sysfile
+	taslock
+	xalloc
+
+code
+	int kernel_pool_pcnt = 10;
+	int main_pool_pcnt = 33;
+	int heap_pool_pcnt = 34;
+	int image_pool_pcnt = 33;
+	int cflag = 0;
+
+	int consoleprint = 1;
+	int redirectconsole = 1;
+	char debug_keys = 1;
+	int panicreset = 0;
+
+init
+	bootinit
+
+root
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/net	/
+	/nvfs	/
+	/proc	/
+	/dis/lib
+	/osinit.dis

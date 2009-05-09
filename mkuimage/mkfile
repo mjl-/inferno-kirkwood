@@ -1,0 +1,12 @@
+<../../../mkconfig
+
+TARG=mkuimage
+OFILES=\
+	mkuimage.$O\
+
+HFILES=\
+	uimage.h\
+
+LIBS=9
+BIN=$ROOT/$OBJDIR/bin
+<$ROOT/mkfiles/mkone-$SHELLTYPE

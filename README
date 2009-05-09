@@ -1,0 +1,30 @@
+# status
+
+only thing the kernel does is continuously write to the uart (no
+interrupts).
+
+
+# intro
+
+this is to be a port of inferno to the kirkwood soc, and the
+sheevaplug in particular/at first.
+
+this is work in progress.
+
+
+# instructions
+
+make sure the contents of this directory are available in
+$ROOT/os/kirkwood/.
+
+to compile a kernel, "mk install".  this will create "uisheeva" and
+"uisheeva.gz" (the same kernels, but one is compressed).  this are
+in the "uimage" format, as expected by the sheeva's u-boot.
+
+for compiling a kernel, the program "mkuimage" is needed.  build &
+install it it by "cd mkuimage && mk install".
+
+
+# licence
+
+the same as the other inferno-os code.
