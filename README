@@ -4,8 +4,8 @@ one clock is set up, a few interrupts come in (it prints a line),
 then it crashes.
 
 next steps:
-- handle clock interrupts reliably
 - get uart working properly, with interrupts
+- handle undefined fp instructions, more proper trap handler
 
 
 # intro

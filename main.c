@@ -31,61 +31,6 @@ poolsizeinit(void)
 }
 
 void
-delay(void)
-{
-	int i;
-
-	i = 0;
-	while(i < (1<<17))
-		i++;
-}
-
-void
-putc(char c)
-{
-	UartReg *r = UART0REG;
-
-	while((r->lsr&LSRthre) == 0)
-		delay();
-	r->thr = c;
-}
-
-void
-puts(char *s)
-{
-	while(*s != 0)
-		putc(*s++);
-}
-
-uchar
-hex(ulong v)
-{
-	v &= 0xf;
-	if(v <= 9)
-		return '0'+v;
-	return 'a'-10+v;
-}
-
-void
-putul(ulong v)
-{
-	char buf[] = "0x33221100 ";
-	uchar *p;
-
-	p = (uchar*)buf+2;
-	*p++ = hex(v>>28);
-	*p++ = hex(v>>24);
-	*p++ = hex(v>>20);
-	*p++ = hex(v>>16);
-	*p++ = hex(v>>12);
-	*p++ = hex(v>>8);
-	*p++ = hex(v>>4);
-	*p++ = hex(v>>0);
-
-	puts(buf);
-}
-
-void
 main(void)
 {
 	IntrReg *intr = INTRREG;
@@ -96,12 +41,12 @@ main(void)
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
 
-	puts("before trapinit\r\n");
+	rprint("before trapinit\n");
 	trapinit();
-	puts("before clockinit\r\n");
+	rprint("before clockinit\n");
 	clockinit();
 
-	puts("waiting\r\n");
+	rprint("waiting\n");
 	spllo();
 
 	/* wait */
@@ -110,15 +55,13 @@ main(void)
 
 	/* xxx debug prints */
 	for(;;) {
-		putul(intr->lo.irq);
-		//putul(intr->lo.irqmask);
-		putul(cpucs->irq);
-		//putul(cpucs->irqmask);
-		putul(tmr->timer0);
-		putul(tmr->ctl);
-		putul(cpsrr());
-		putul(spsrr());
-		puts("\r\n");
+		rprint("intr->lo.irq %X intr->lo.irqmask %X cpucs->irq %X\n",
+			intr->lo.irq, 	intr->lo.irqmask,   cpucs->irq);
+
+		rprint("tmr->timer0 %X timer->ctl %X\n",
+			tmr->timer0, tmr->ctl);
+
+		rprint("cpsr %X spsr %X\n", cpsrr(), spsrr());
 		//cpucs->irq = 0;
 		//intr->lo.irq = 0;
 	}
@@ -133,7 +76,7 @@ main(void)
 	trapinit();
 	clockinit();
 	printinit();
-	/* screeninit() */
+	screeninit();
 	procinit();
 	links();
 	chandevreset();

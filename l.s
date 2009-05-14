@@ -58,17 +58,6 @@ TEXT _vund(SB), $-4
 	MOVW		$PsrMund, R0
 	B		_vswitch
 
-TEXT _vsvc(SB), $-4
-	MOVW.W		R14, -4(R13)
-	MOVW		CPSR, R14
-	MOVW.W		R14, -4(R13)
-	BIC		$PsrMask, R14
-	ORR		$(PsrDirq|PsrDfiq|PsrMsvc), R14
-	MOVW		R14, CPSR
-	MOVW		$PsrMsvc, R14
-	MOVW.W		R14, -4(R13)
-	B		_vsaveu
-
 TEXT _vpab(SB), $-4
 	MOVM.DB		[R0-R3], (R13)
 	MOVW		$PsrMabt, R0
@@ -83,6 +72,17 @@ TEXT _vfiq(SB), $-4				/* FIQ */
 	MOVM.DB		[R0-R3], (R13)
 	MOVW		$PsrMfiq, R0
 	B		_vswitch
+
+TEXT _vsvc(SB), $-4
+	MOVW.W		R14, -4(R13)
+	MOVW		CPSR, R14
+	MOVW.W		R14, -4(R13)
+	BIC		$PsrMask, R14
+	ORR		$(PsrDirq|PsrDfiq|PsrMsvc), R14
+	MOVW		R14, CPSR
+	MOVW		$PsrMsvc, R14
+	MOVW.W		R14, -4(R13)
+	B		_vsaveu
 
 TEXT _virq(SB), $-4				/* IRQ */
 	MOVM.DB		[R0-R3], (R13)
@@ -106,7 +106,6 @@ _vsaveu:						/* Save Registers */
 
 	SUB		$8, R13
 	MOVM.DB.W	[R0-R12], (R13)
-
 	MOVW		R0, R0				/* gratuitous noop */
 
 	MOVW		$setR12(SB), R12		/* static base (SB) */

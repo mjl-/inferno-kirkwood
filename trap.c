@@ -44,16 +44,24 @@ trapinit(void)
 }
 
 void
-trap(Ureg*)
+trap(Ureg *ureg)
 {
+	ulong itype;
 	IntrReg *intr = INTRREG;
 	CpucsReg *cpucs = CPUCSREG;
 
+	itype = ureg->type;
+	if(itype == PsrMabt+1)
+		ureg->pc -= 8;
+	else
+		ureg->pc -= 4;
+	ureg->sp = (ulong)(ureg+1);
+
 	/* xxx */
 	/* must be the clock, print some bytes to uart */
-	puts("t\r\n");
+	rprint("t\n");
 	
-	/* reset interrupt */
+	/* clear interrupt */
 	cpucs->irq = ~(1<<IRQcputimer0);
 	intr->lo.irq = ~(1<<IRQ0bridge);
 }
@@ -62,9 +70,7 @@ void
 setpanic(void)
 {
 	consoleprint = 1;
-/*
-	serwrite = uartputs;
-*/
+//	serwrite = uartputs;
 }
 
 void

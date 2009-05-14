@@ -22,6 +22,7 @@ void	archreboot(void);
 void	trapinit(void);
 void	vectors(void);
 void	vtable(void);
+void	screeninit(void);
 int	splfhi(void);
 int	splflo(void);
 ulong	cpsrr(void);
@@ -29,5 +30,4 @@ ulong	spsrr(void);
 
 
 void	(*screenputs)(char*, int);
-
-void	puts(char *);
+int	rprint(char *, ...);

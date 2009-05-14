@@ -1,6 +1,6 @@
 dev
 	root
-	cons
+	cons noscreen
 	env
 	mnt
 	pipe
@@ -17,6 +17,7 @@ lib
 
 misc
 	uartkirkwood
+	rprint
 
 mod
 	math
