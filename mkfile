@@ -11,13 +11,18 @@ INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
 
 <| $SHELLNAME ../port/mkdevlist $CONF
 
+KTZERO=0x8000
+KLOAD=0x7fe0  # $KTZERO-0x20 (size of a.out header)
+
 OBJ=\
 	l.$O\
+	clock.$O\
+	fpi.$O\
+	fpiarm.$O\
+	fpimem.$O\
+	trap.$O\
 	main.$O\
 	$CONF.root.$O\
-	clock.$O\
-	trap.$O\
-	archkirkwood.$O\
 	$IP\
 	$DEVS\
 	$ETHERS\
@@ -50,14 +55,15 @@ inst:V: default
 
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD -o $target -T 0x8000 -R4 -l $OBJ $CONF.$O $LIBFILES
+	$LD -o $target -T $KTZERO -R4 -l $OBJ $CONF.$O $LIBFILES
+
 
 ui$CONF: i$CONF
-	mkuimage 0x7fe0 0x8000 i$CONF >$target
+	mkuimage $KLOAD $KTZERO i$CONF >$target
 
 ui$CONF.gz: i$CONF
 	gzip <i$CONF >i$CONF.gz
-	mkuimage -C gzip 0x7fe0 0x8000 i$CONF.gz >$target
+	mkuimage -C gzip $KLOAD $KTZERO i$CONF.gz >$target
 
 <../port/portmkfile
 

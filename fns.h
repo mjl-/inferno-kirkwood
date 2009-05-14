@@ -13,6 +13,7 @@ void	setr13(int, void*);
 void	clockinit(void);
 void	clockcheck(void);
 void	clockpoll(void);
+void	dumpregs(Ureg* ureg);
 void	links(void);
 ulong	getcallerpc(void*);
 void	idlehands(void);
@@ -28,6 +29,6 @@ int	splflo(void);
 ulong	cpsrr(void);
 ulong	spsrr(void);
 
-
 void	(*screenputs)(char*, int);
+
 int	rprint(char *, ...);

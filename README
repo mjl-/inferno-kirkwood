@@ -1,11 +1,11 @@
 # status
 
-one clock is set up, a few interrupts come in (it prints a line),
-then it crashes.
+one clock is set up, and its interrupts keep coming in.  printing
+to uart in polling mode.
 
 next steps:
-- get uart working properly, with interrupts
 - handle undefined fp instructions, more proper trap handler
+- get uart working properly, with interrupts
 
 
 # intro

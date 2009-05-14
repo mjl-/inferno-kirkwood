@@ -1,6 +1,6 @@
 dev
 	root
-	cons noscreen
+	cons noscreen archkirkwood
 	env
 	mnt
 	pipe
