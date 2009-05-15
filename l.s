@@ -150,7 +150,6 @@ TEXT gotolabel(SB), $-4
 	RET
 
 
-/* xxx have to fill this in */
 TEXT splhi(SB), $-4
 	MOVW	CPSR, R0
 	ORR	$(PsrDirq), R0, R1
@@ -168,7 +167,6 @@ TEXT spllo(SB), $-4
 TEXT splx(SB), $-4
 	MOVW	$(MACHADDR), R6
 	MOVW	R14, (R6)	/* m->splpc */
-
 TEXT splxpc(SB), $-4
 	MOVW	R0, R1
 	MOVW	CPSR, R0

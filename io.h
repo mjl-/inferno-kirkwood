@@ -13,6 +13,10 @@ enum {
 };
 
 enum {
+	Irqlo, Irqhi, Irqbridge,
+};
+
+enum {
 	IRQcpuself,
 	IRQcputimer0,
 	IRQcputimer1,
