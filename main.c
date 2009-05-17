@@ -217,7 +217,7 @@ kprocchild(Proc *p, void (*func)(void*), void *arg)
 void
 idlehands(void)
 {
-	/* xxx silence processor until interrupt */
+	idle();
 }
 
 void

@@ -201,3 +201,7 @@ TEXT cpsrr(SB), $-4
 TEXT spsrr(SB), $-4
 	MOVW		SPSR, R0
 	RET
+
+TEXT idle(SB), $-4
+	MCR		15, 0, R0, C(7), C(0), 4
+	RET

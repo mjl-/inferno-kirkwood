@@ -22,6 +22,7 @@ int	fpiarm(Ureg*);
 void	fpinit(void);
 ulong	getcallerpc(void*);
 void	idlehands(void);
+void	idle(void);
 void	intrclear(int, int);
 void	intrmask(int, int);
 void	intrunmask(int, int);
