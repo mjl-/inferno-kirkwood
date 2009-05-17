@@ -9,6 +9,7 @@ dev
 	dup
 	uart
 	rtc
+	crypto
 
 lib
 	interp
@@ -89,3 +90,4 @@ root
 	/dis/echo.dis
 	/dis/calc.dis
 	/dis/lib/rand.dis
+	/dis/xd.dis

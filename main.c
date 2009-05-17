@@ -60,7 +60,7 @@ iprint("chandevreset\n");
 
 	print("\nInferno %s\n", VERSION);
 	print("Vita Nuova\n");
-	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
+	print("conf %s (%lud) jit %d kirkwood %s\n\n", conffile, kerndate, cflag, conf.devidstr);
 
 	userinit();
 	schedinit();

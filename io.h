@@ -10,6 +10,19 @@ enum {
 	AddrDeviceid =	Intrbase+0x10034,
 	AddrClockctl =	Intrbase+0x1004c,
 	AddrIocfg0 =	Intrbase+0x100e0,
+
+	AddrDevid =	Intrbase+0x10034,
+
+	AddrHash =	Intrbase+0x3dd00,
+	AddrDes =	Intrbase+0x3dd40,
+	AddrAesenc =	Intrbase+0x3dd80,
+	AddrAesdec =	Intrbase+0x3ddc0,
+	AddrCryptoIntr =Intrbase+0x3de20,
+	AddrSecurity =	Intrbase+0x3de00,
+
+	AddrTdmaAddr =	Intrbase+0x30a00,
+	AddrTdmaCtl =	Intrbase+0x30800,
+	AddrTdamIntr =	Intrbase+0x308c8,
 };
 
 enum {
@@ -226,4 +239,15 @@ struct RtcReg
 	ulong	alarmdt;
 	ulong	intrmask;
 	ulong	intrcause;
+};
+
+
+#define AESDECREG	((AesReg*)AddrAesdec)
+#define AESENCREG	((AesReg*)AddrAesenc)
+typedef struct AesReg AesReg;
+struct AesReg
+{
+	ulong	key[8];
+	ulong	data[4];
+	ulong	cmd;
 };

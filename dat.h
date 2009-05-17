@@ -24,6 +24,7 @@ struct Conf
 	ulong	base0;			/* base of bank 0 */
 	ulong	base1;			/* base of bank 1 */
 	ulong	ialloc;			/* max interrupt time allocation in bytes */
+	char	*devidstr;		/* kirkwood device name */
 
 	int		textwrite;	/* writeable text segment, for debug */
 };

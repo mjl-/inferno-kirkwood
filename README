@@ -18,7 +18,9 @@ this is work in progress.
 # instructions
 
 make sure the contents of this directory are available in
-$ROOT/os/kirkwood/.
+$ROOT/os/kirkwood/.  make sure $ROOT/os/init/sheevainit.b is the
+same as $ROOT/os/kirkwood/sheevainit.b (either by copy, symlink or
+bind).
 
 to compile a kernel, "mk install".  this will create "uisheeva" and
 "uisheeva.gz" (the same kernels, but one is compressed).  these are
