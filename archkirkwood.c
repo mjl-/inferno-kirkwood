@@ -21,5 +21,15 @@ archreset(void)
 void
 archreboot(void)
 {
-	/* xxx */
+}
+
+void
+archconsole(void)
+{
+	uartconsole();
+}
+
+void
+kbdinit(void)
+{
 }

@@ -146,6 +146,9 @@ struct TimerReg
 
 
 enum {
+	IERrx		= 1<<0,
+	IERtx		= 1<<1,
+
 	IRRintrmask	= (1<<4)-1,
 	IRRnointr	= 1,
 	IRRthrempty	= 2,

@@ -17,7 +17,6 @@ lib
 
 misc
 	uartkirkwood
-	rprint
 
 mod
 	math
@@ -57,12 +56,11 @@ code
 	int cflag = 0;
 
 	int consoleprint = 1;
-	int redirectconsole = 1;
 	char debug_keys = 1;
 	int panicreset = 0;
 
 init
-	bootinit
+	sheevainit
 
 root
 	/chan	/
@@ -75,3 +73,16 @@ root
 	/proc	/
 	/dis/lib
 	/osinit.dis
+	/dis/sh.dis
+	/dis/lib/arg.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/env.dis
+	/dis/lib/filepat.dis
+	/dis/lib/readdir.dis
+	/dis/lib/string.dis
+	/dis/ls.dis
+	/dis/date.dis
+	/dis/cd.dis
+	/dis/cat.dis
+	/dis/echo.dis

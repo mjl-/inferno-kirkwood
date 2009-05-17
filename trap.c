@@ -57,12 +57,13 @@ intrmask(int sort, int v)
 void
 intrunmask(int sort, int v)
 {
-	*irqs[sort].irqmask |= 1<<v;
+	*irqs[sort].irqmask |= (1<<v);
 }
 
 static void
 maskallints(void)
 {
+	/* no fiq or ep in use */
 	INTRREG->lo.irqmask = 0;
 	INTRREG->hi.irqmask = 0;
 	CPUCSREG->irqmask = 0;
@@ -73,7 +74,7 @@ void
 intrset(Handler *h, void (*f)(Ureg*, void*), void *a, char *name)
 {
 	if(h->r != nil)
-		panic("duplicate irq: %s\n", h->name);
+		panic("duplicate irq: %s (%#p)\n", h->name, h->r);
 	h->r = f;
 	h->a = a;
 	strncpy(h->name, name, KNAMELEN-1);
@@ -132,6 +133,8 @@ intrs(Ureg *ur, int sort)
 
 	irq = irqs[sort];
 	ibits = *irq.irq;
+	ibits &= *irq.irqmask;
+
 	for(i = 0; i < irq.nirqvec && ibits; i++)
 		if(ibits & (1<<i)){
 			h = &irq.irqvec[i];
@@ -140,12 +143,18 @@ intrs(Ureg *ur, int sort)
 				ibits &= ~(1<<i);
 			}
 		}
-	if(ibits != 0){
+	if(ibits != 0) {
 		iprint("spurious irq%s interrupt: %8.8lux\n", irq.name, ibits);
 		s = splfhi();
-		*irq.irq &= ~ibits;
+		*irq.irq &= ibits;
 		splx(s);
 	}
+}
+
+void
+intrhi(Ureg *ureg, void*)
+{
+	intrs(ureg, Irqhi);
 }
 
 void
@@ -178,20 +187,25 @@ trapinit(void)
 	for(i = 0; i < nelem(irqlo); i++)
 		intrunset(&irqlo[i]);
 	for(i = 0; i < nelem(irqhi); i++)
-		intrunset(&irqlo[i]);
-	for(i = 0; i < nelem(irqhi); i++)
-		intrunset(&irqlo[i]);
+		intrunset(&irqhi[i]);
+	for(i = 0; i < nelem(irqbridge); i++)
+		intrunset(&irqbridge[i]);
 
 	/* disable all interrupts */
+	INTRREG->lo.fiqmask = 0;
+	INTRREG->hi.fiqmask = 0;
 	INTRREG->lo.irqmask = 0;
 	INTRREG->hi.irqmask = 0;
+	INTRREG->lo.epmask = 0;
+	INTRREG->hi.epmask = 0;
 	CPUCSREG->irqmask = 0;
 
 	/* clear interrupts */
-	INTRREG->lo.irq = 0;
-	INTRREG->hi.irq = 0;
-	CPUCSREG->irq = 0;
+	INTRREG->lo.irq = ~0;
+	INTRREG->hi.irq = ~0;
+	CPUCSREG->irq = ~0;
 
+	intrenable(Irqlo, IRQ0sum, intrhi, nil, "hi");
 	intrenable(Irqlo, IRQ0bridge, intrbridge, nil, "bridge");
 }
 
@@ -242,9 +256,7 @@ trap(Ureg *ureg)
 {
 	ulong far, fsr;
 	int rem, t, itype;
-	Proc *oup;
 
-if(0) {
 	if(up != nil)
 		rem = ((char*)ureg)-up->kstack;
 	else
@@ -252,7 +264,6 @@ if(0) {
 	if(ureg->type != PsrMfiq && rem < 256)
 		panic("trap %d bytes remaining (%s), up=#%8.8lux ureg=#%8.8lux pc=#%8.8ux",
 			rem, up?up->text:"", up, ureg, ureg->pc);
-}
 
 	itype = ureg->type;
 	if(itype == PsrMabt+1)
@@ -260,22 +271,6 @@ if(0) {
 	else
 		ureg->pc -= 4;
 	ureg->sp = (ulong)(ureg+1);
-
-/* xxx no fiq configured.  perhaps later, or remove this? */
-if(0) {
-	if(itype == PsrMfiq){	/* fast interrupt (eg, profiler) */
-		oup = up;
-		up = nil;
-		//intrs(ureg, INTRREG->icfp);
-		up = oup;
-		return;
-	}
-}
-
-	/* All other traps */
-
-	if(0 && ureg->psr & PsrDfiq)
-		panic("FIQ disabled");
 
 	if(up){
 		up->pc = ureg->pc;
@@ -287,7 +282,6 @@ if(0) {
 		up = nil;		/* no process at interrupt level */
 		splflo();	/* allow fast interrupts */
 		intrs(ureg, Irqlo);
-		intrs(ureg, Irqhi);
 		up = m->proc;
 		preemption(m->ticks - t);
 		break;
@@ -389,7 +383,7 @@ setpanic(void)
 	spllo();
 	/* screenon(!consoleprint); */
 	consoleprint = 1;
-	serwrite = uartputs;
+	serwrite = serialputs;
 }
 
 void

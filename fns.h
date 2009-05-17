@@ -11,6 +11,7 @@ void	setr13(int, void*);
 #define PADDR(p)	((ulong)p)
 
 void	archconfinit(void);
+void	archconsole(void);
 void	archreset(void);
 void	archreboot(void);
 void	clockinit(void);
@@ -26,9 +27,11 @@ void	intrmask(int, int);
 void	intrunmask(int, int);
 void	intrdisable(int, int, void (*)(Ureg*, void*), void*, char*);
 void	intrenable(int, int, void (*)(Ureg*, void*), void*, char*);
+void	kbdinit(void);
 void	links(void);
 void	screeninit(void);
 void	trapinit(void);
+void	uartconsole(void);
 
 int	splfhi(void);
 int	splflo(void);
@@ -37,6 +40,5 @@ ulong	spsrr(void);
 void	vectors(void);
 void	vtable(void);
 
+void	serialputs(char *, int);
 void	(*screenputs)(char*, int);
-
-int	rprint(char *, ...);

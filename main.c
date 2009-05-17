@@ -7,6 +7,8 @@
 #include "io.h"
 #include "version.h"
 
+//extern void (*serwrite)(char *, int) = serialputs;
+
 Mach *m = (Mach*)MACHADDR;
 Proc *up = 0;
 Vectorpage *page0 = (Vectorpage*)KZERO;
@@ -33,58 +35,28 @@ poolsizeinit(void)
 void
 main(void)
 {
-	IntrReg *intr = INTRREG;
-	CpucsReg *cpucs = CPUCSREG;
-	TimerReg *tmr = TIMERREG;
-
 	memset(edata, 0, end-edata);	/* clear bss */
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
-
-	rprint("before trapinit\n");
-	trapinit();
-	rprint("before clockinit\n");
-	clockinit();
-
-	rprint("waiting\n");
-	spllo();
-
-	/* wait */
-	for(;;)
-		;
-
-	/* xxx debug prints */
-	for(;;) {
-		rprint("intr->lo.irq %X intr->lo.irqmask %X cpucs->irq %X\n",
-			intr->lo.irq, 	intr->lo.irqmask,   cpucs->irq);
-
-		rprint("tmr->timer0 %X timer->ctl %X\n",
-			tmr->timer0, tmr->ctl);
-
-		rprint("cpsr %X spsr %X\n", cpsrr(), spsrr());
-		//cpucs->irq = 0;
-		//intr->lo.irq = 0;
-	}
 
 	quotefmtinstall();
 	archreset();
 	confinit();
 	xinit();
-	/* mmuinit(); */
 	poolinit();
 	poolsizeinit();
 	trapinit();
 	clockinit();
 	printinit();
-	screeninit();
 	procinit();
 	links();
+	archconsole();
+iprint("chandevreset\n");
 	chandevreset();
 
 	eve = strdup("inferno");
 
-	/* archconsole(); */
-	/* kbdinit(); */
+	kbdinit();
 
 	print("\nInferno %s\n", VERSION);
 	print("Vita Nuova\n");
@@ -211,7 +183,8 @@ exit(int inpanic)
 		for(;;)
 			clockpoll();
 	}
-	archreboot();
+	for(;;)
+		;
 }
 
 static void
