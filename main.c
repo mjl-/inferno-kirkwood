@@ -183,8 +183,9 @@ exit(int inpanic)
 		for(;;)
 			clockpoll();
 	}
-	for(;;)
-		;
+
+	CPUCSREG->rstout = RstoutSoft;
+	CPUCSREG->softreset = ResetSystem;
 }
 
 static void

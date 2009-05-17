@@ -36,6 +36,15 @@ enum {
 	IRQcputimerwd,
 };
 
+
+enum {
+	RstoutPex =	1<<0,
+	RstoutWatchdog =1<<1,
+	RstoutSoft =	1<<2,
+
+	ResetSystem =	1<<0,
+};
+
 #define CPUCSREG	((CpucsReg*)AddrCpucsr)
 typedef struct CpucsReg CpucsReg;
 struct CpucsReg
