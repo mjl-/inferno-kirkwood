@@ -8,6 +8,7 @@ dev
 	srv
 	dup
 	uart
+	rtc
 
 lib
 	interp
@@ -86,3 +87,5 @@ root
 	/dis/cd.dis
 	/dis/cat.dis
 	/dis/echo.dis
+	/dis/calc.dis
+	/dis/lib/rand.dis
