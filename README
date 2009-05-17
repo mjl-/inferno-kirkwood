@@ -1,11 +1,11 @@
 # status
 
-one clock is set up, and its interrupts keep coming in.  printing
-to uart in polling mode.
+runs dis programs.
 
 next steps:
-- handle undefined fp instructions, more proper trap handler
-- get uart working properly, with interrupts
+- find problems/crashes
+- rtc
+- ethernet
 
 
 # intro
