@@ -104,16 +104,16 @@ rtctimeset(ulong v)
 	/* we start at unix epoch, and keep adding years,months,days,hours,minutes,seconds until we match parameter v */
 	n = 0;
 
-	for(year = 1970; n+(yeardays(year)*24*3600) < v; year++)
+	for(year = 1970; n+(yeardays(year)*24*3600) <= v; year++)
 		n += yeardays(year)*24*3600;
-	for(mon = 0; n+(monthdays(year, mon)*24*3600) < v; mon++)
+	for(mon = 0; n+(monthdays(year, mon)*24*3600) <= v; mon++)
 		n += monthdays(year, mon)*24*3600;
-	for(day = 0; n+24*3600 < v; day++)
+	for(day = 0; n+24*3600 <= v; day++)
 		n += 24*3600;
 
-	for(h = 0; n+3600 < v; h++)
+	for(h = 0; n+3600 <= v; h++)
 		n += 3600;
-	for(m = 0; n+60 < v; m++)
+	for(m = 0; n+60 <= v; m++)
 		n += 60;
 	s = v-n;
 
