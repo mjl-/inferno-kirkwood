@@ -5,6 +5,8 @@
 #include "fns.h"
 #include "../port/error.h"
 #include "io.h"
+#include "../port/netif.h"
+#include "etherif.h"
 
 char *
 devidstr(ulong v)
@@ -23,6 +25,14 @@ archconfinit(void)
 	conf.topofmem = 512*1024*124;
 	m->cpuhz = 100;
 	conf.devidstr = devidstr(*(ulong*)AddrDevid);
+}
+
+int
+archether(int ctlno, Ether *ether)
+{
+print("archether ctlno %d\n", ctlno);
+	ether->nopt = 0;
+	return -1;
 }
 
 void
@@ -45,3 +55,12 @@ void
 kbdinit(void)
 {
 }
+
+uvlong
+fastticks(uvlong *hz)
+{
+	if(hz)
+		*hz = HZ;
+	return m->ticks;
+}
+

@@ -9,13 +9,37 @@ dev
 	dup
 	uart
 	rtc
+	ssl
+	cap
+#	sign
+	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum iprouter plan9 nullmedium pktmedium
 	crypto
+	ether netif netaux
+
+ip
+	il
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
+
+link
+	ethermedium
+	etherkirkwood
 
 lib
 	interp
+#	tk
+#	draw
+#	memlayer
+#	memdraw
+	keyring
+	sec
+	mp
 	math
 	kern
-	sec
+
 
 misc
 	uartkirkwood
@@ -23,6 +47,9 @@ misc
 mod
 	math
 	sys
+#	draw
+#	tk
+	keyring
 
 port
 	alarm
