@@ -23,6 +23,9 @@ enum {
 	AddrTdmaAddr =	Intrbase+0x30a00,
 	AddrTdmaCtl =	Intrbase+0x30800,
 	AddrTdamIntr =	Intrbase+0x308c8,
+
+	AddrGbe0 =	Intrbase+0x72000,
+	AddrGbe1 =	Intrbase+0x76000,
 };
 
 enum {
@@ -259,4 +262,107 @@ struct AesReg
 	ulong	key[8];
 	ulong	data[4];
 	ulong	cmd;
+};
+
+
+
+#define GBE0REG	((GbeReg*)AddrGbe0)
+#define GBE1REG	((GbeReg*)AddrGbe1)
+#define PAD(next, last)	(((next)-4-(last))/4)
+typedef struct GbeReg GbeReg;
+struct GbeReg
+{
+	ulong	phy;
+	ulong	smi;
+	ulong	euda;
+	ulong	eudid;
+	ulong	pad0[PAD(0x080, 0x00c)];
+	ulong	euic;
+	ulong	euim;
+	ulong	pad1[PAD(0x094, 0x084)];
+	ulong	euea;
+	ulong	euiae;
+	ulong	pad2[PAD(0x0b0, 0x098)];
+	ulong	euc;
+	ulong	pad3[PAD(0x200, 0x0b0)];
+	struct {
+		ulong	addr;
+		ulong	size;
+	} base[6];
+	ulong	pad4[PAD(0x280, 0x22c)];
+	ulong	harr[4];
+	ulong	bare;
+	ulong	epap;
+
+	ulong	pad5[PAD(0x400, 0x294)];
+	ulong	portcfg;
+	ulong	portcfgx;
+	ulong	mii;
+	ulong	pad6;
+	ulong	evlane;
+	ulong	macal;
+	ulong	macah;
+	ulong	sdc;
+	ulong	dscp[7];
+	ulong	psc0;
+	ulong	vpt2p;
+	ulong	ps0;
+	ulong	tqc;
+	ulong	psc1;
+	ulong	ps1;
+	ulong	mvhdr;
+	ulong	pad8[2];
+	ulong	irq;
+	ulong	irqe;
+	ulong	irqmask;
+	ulong	irqemask;
+	ulong	pad9;
+	ulong	pxtfut;
+	ulong	pad10;
+	ulong	pxmfs;
+	ulong	pad11;
+	ulong	pxdfc;
+	ulong	pxofc;
+	ulong	pad12[2];
+	ulong	piae;
+	ulong	pad13[PAD(0x4bc, 0x494)];
+	ulong	etherprio;
+	ulong	pad14[PAD(0x4dc, 0x4bc)];
+	ulong	tqfpc;
+	ulong	pttbrc;
+	ulong	tqc1;
+	ulong	pmtu;
+	ulong	pmtbs;
+	ulong	pad15[PAD(0x600, 0x4ec)];
+	struct {
+		ulong	pad[3];
+		ulong	r;
+	} crdp[8];
+	ulong	rqc;
+	ulong	tcsdp;
+	ulong	pad16[PAD(0x6c0, 0x684)];
+	ulong	tcqdp[8];
+	ulong	pad17[PAD(0x700, 0x6dc)];
+	struct {
+		ulong	tbctr;
+		ulong	tbcfg;
+		ulong	acfg;
+		ulong	pad;
+	} tq[8];
+	ulong	pttbc;
+	ulong	pad18[PAD(0x7a8, 0x780)];
+	ulong	ipg2;
+	ulong	pad19[3];
+	ulong	ipg3;
+	ulong	pad20;
+	ulong	htlp;
+	ulong	htap;
+	ulong	ltap;
+	ulong	pad21;
+	ulong	ts;
+
+	ulong	pad22[PAD(0x1400, 0x07d0)];
+	ulong	dfsmt[64];
+	ulong	dfomt[64];
+	ulong	dfut[4];
 };
