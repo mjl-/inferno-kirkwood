@@ -23,6 +23,7 @@ init()
 	sys->bind("#t", "/dev", sys->MAFTER);		# serial port
 	sys->bind("#r", "/dev", sys->MAFTER);		# RTC
 	sys->bind("#C", "/dev", Sys->MAFTER);		# crypto
+	sys->bind("#T", "/dev", Sys->MAFTER);		# sheeva
 	sys->bind("#p", "/prog", sys->MREPL);		# prog device
 	sys->bind("#d", "/fd", Sys->MREPL);
 

@@ -30,6 +30,30 @@ for compiling a kernel, the program "mkuimage" is needed.  build &
 install it it by "cd mkuimage && mk install".
 
 
+# booting
+
+we can only boot from tftp for now.  set up a dhcp & tftp server.
+the dhcp server should have a boot file name (the kernel, e.g.
+uisheeva.gz) and a next server (the ip address of the tftp server)
+configured.
+
+after reset, hit some keys to prevent u-boot from auto-booting.
+the following commands boot inferno:
+
+	dhcp    # configure ethernet
+	tftp    # fetch kernel
+	bootm   # boot the kernel
+
+inferno boots into a shell.  a few commands are available.  for
+development, mdb is useful for reading/writing registers, e.g.:
+
+	mdb -w /dev/sheevaregs
+
+to make mdb do anything useful with the sheevaplugs registers (which
+are configured at 0xf1000000, high bit set), you'll need to apply
+the patch misc/mdb.b.diff.
+
+
 # licence
 
 the kernel code is released under the same licence as the inferno-os

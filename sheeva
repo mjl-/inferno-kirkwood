@@ -15,6 +15,7 @@ dev
 	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum iprouter plan9 nullmedium pktmedium
 	crypto
 	ether netif netaux
+	sheeva
 
 ip
 	il
@@ -118,3 +119,7 @@ root
 	/dis/calc.dis
 	/dis/lib/rand.dis
 	/dis/xd.dis
+	/dis/mdb.dis
+	/dis/lib/dis.dis
+	/dis/pwd.dis
+	/dis/lib/workdir.dis

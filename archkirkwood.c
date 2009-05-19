@@ -46,15 +46,25 @@ p32(uchar *p, ulong v)
 int
 archether(int ctlno, Ether *e)
 {
+	GbeReg* gbe0 = GBE0REG;
+	ulong ps0;
+
 	switch(ctlno) {
 	case 0:
 		e->itype = Irqlo;
 		e->irq = IRQ0gbe0sum;
 		e->mem = AddrGbe0;
-		p32(e->ea, GBE0REG->macah);
-		p16(e->ea+4, GBE0REG->macal);
-		print("mac %2.2ux%2.2ux%2.2ux%2.2ux%2.2ux%2.2ux\n",
+		p32(e->ea, gbe0->macah);
+		p16(e->ea+4, gbe0->macal);
+		print("ether, mac %2.2ux%2.2ux%2.2ux%2.2ux%2.2ux%2.2ux",
 			e->ea[0], e->ea[1], e->ea[2], e->ea[3], e->ea[4], e->ea[5]);
+		ps0 = gbe0->ps0;
+		print(", link %s, %s duplex, speed %s, flow control %s\n",
+			(ps0&(1<<1)) ? "up" : "down",
+			(ps0&(1<<2)) ? "full" : "half",
+			(ps0&(1<<4)) ? "1000" : "10/100",
+			(ps0&(1<<3)) ? "on" : "off"
+		);
 		e->nopt = 0;
 		break;
 	default:
