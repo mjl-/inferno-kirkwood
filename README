@@ -1,10 +1,15 @@
 # status
 
-runs dis programs.
+boots, uses uart as console, rtc, runs dis programs, basic network support (dhcp & mount working).
 
 next steps:
 - find problems/crashes
-- ethernet
+- more ethernet (link changes, more proper init, more efficient packet handling)
+- storage (sdio? nand?)
+- l1/l2 caches?
+- improve uart (mode setting)
+- crypto support
+- later: usb,twsi,spi,gpio,sata,audio(i2s),efuse,pciexpress,xor
 
 
 # intro
@@ -18,9 +23,11 @@ this is work in progress.
 # instructions
 
 make sure the contents of this directory are available in
-$ROOT/os/kirkwood/.  make sure $ROOT/os/init/sheevainit.b is the
-same as $ROOT/os/kirkwood/sheevainit.b (either by copy, symlink or
-bind).
+$ROOT/os/kirkwood/.
+make sure $ROOT/os/init/sheevainit.b is the same as
+$ROOT/os/kirkwood/sheevainit.b (by copy, symlink or bind).
+make sure $ROOT/dis/initsheeva is the same as
+$ROOT/os/kirkwood/misc/initsheeva.
 
 to compile a kernel, "mk install".  this will create "uisheeva" and
 "uisheeva.gz" (the same kernels, but one is compressed).  these are
@@ -52,6 +59,10 @@ development, mdb is useful for reading/writing registers, e.g.:
 to make mdb do anything useful with the sheevaplugs registers (which
 are configured at 0xf1000000, high bit set), you'll need to apply
 the patch misc/mdb.b.diff.
+
+to configure network with dhcp, and provide shells on the telnet port:
+
+	run /dis/initsheeva
 
 
 # licence

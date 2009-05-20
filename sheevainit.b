@@ -17,15 +17,15 @@ init()
 	
 	sys->print("sheevainit...\n");
 
-	sys->bind("#c", "/dev", sys->MAFTER);
-	sys->bind("#r", "/dev", sys->MAFTER);
-	sys->bind("#c", "/dev", sys->MREPL);			# console
+	sys->bind("#c", "/dev", sys->MREPL);		# console
 	sys->bind("#t", "/dev", sys->MAFTER);		# serial port
-	sys->bind("#r", "/dev", sys->MAFTER);		# RTC
+	sys->bind("#r", "/dev", sys->MAFTER);		# rtc
 	sys->bind("#C", "/dev", Sys->MAFTER);		# crypto
 	sys->bind("#T", "/dev", Sys->MAFTER);		# sheeva
 	sys->bind("#p", "/prog", sys->MREPL);		# prog device
 	sys->bind("#d", "/fd", Sys->MREPL);
+	sys->bind("#I", "/net", Sys->MREPL);
+	sys->bind("#l", "/net", Sys->MAFTER);
 
 	rtc();
 

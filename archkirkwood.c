@@ -51,6 +51,7 @@ archether(int ctlno, Ether *e)
 
 	switch(ctlno) {
 	case 0:
+		strcpy(e->type, "kirkwood");
 		e->itype = Irqlo;
 		e->irq = IRQ0gbe0sum;
 		e->mem = AddrGbe0;
@@ -66,11 +67,8 @@ archether(int ctlno, Ether *e)
 			(ps0&(1<<3)) ? "on" : "off"
 		);
 		e->nopt = 0;
-		break;
-	default:
-		return -1;
+		return 1;
 	}
-print("xxx ether\n");
 	return -1;
 }
 
@@ -102,4 +100,3 @@ fastticks(uvlong *hz)
 		*hz = HZ;
 	return m->ticks;
 }
-

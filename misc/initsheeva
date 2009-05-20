@@ -1,0 +1,11 @@
+#!/dis/sh.dis
+load std
+mount {mntgen} /n
+x=`{cat /net/ipifc/clone}
+echo bind ether /net/ether0 >/net/ipifc/$x/ctl
+echo dhcp...
+ip/dhcp /net/ipifc/$x
+ndb/cs
+ndb/dns
+echo listen telnet...
+listen -A net!*!telnet /dis/sh.dis

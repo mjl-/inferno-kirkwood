@@ -98,12 +98,19 @@ root
 	/dis
 	/env	/
 	/fd	/
+	/n
 	/net	/
 	/nvfs	/
-	/proc	/
+	/prog	/
 	/dis/lib
+	/dis/lib/encoding
+	/dis/lib/styxconv
+	/dis/ip
+	/dis/ndb
+	/dis/sh
 	/osinit.dis
 	/dis/sh.dis
+	/dis/sh/std.dis
 	/dis/lib/arg.dis
 	/dis/lib/bufio.dis
 	/dis/lib/daytime.dis
@@ -111,11 +118,36 @@ root
 	/dis/lib/filepat.dis
 	/dis/lib/readdir.dis
 	/dis/lib/string.dis
+	/dis/lib/regex.dis
+	/dis/lib/styxlib.dis
+	/dis/lib/encoding/base64.dis
 	/dis/ls.dis
 	/dis/date.dis
 	/dis/cd.dis
 	/dis/cat.dis
 	/dis/echo.dis
+	/dis/ps.dis
+	/dis/date.dis
+	/dis/dd.dis
+	/dis/dial.dis
+	/dis/ed.dis
+	/dis/export.dis
+	/dis/grep.dis
+	/dis/import.dis
+	/dis/kill.dis
+	/dis/mc.dis
+	/dis/memfs.dis
+	/dis/mkdir.dis
+	/dis/mv.dis
+	/dis/p.dis
+	/dis/read.dis
+	/dis/rm.dis
+	/dis/sleep.dis
+	/dis/styxlisten.dis
+	/dis/tail.dis
+	/dis/telnet.dis
+	/dis/time.dis
+	/dis/touch.dis
 	/dis/calc.dis
 	/dis/lib/rand.dis
 	/dis/xd.dis
@@ -123,3 +155,41 @@ root
 	/dis/lib/dis.dis
 	/dis/pwd.dis
 	/dis/lib/workdir.dis
+
+	/dis/listen.dis
+	/dis/lib/auth.dis
+	/dis/lib/ssl.dis
+
+	/dis/ip/dhcp.dis
+	/dis/ip/ping.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/ip.dis
+	/dis/lib/random.dis
+	/dis/lib/timers.dis
+
+	/dis/ns.dis
+	/dis/bind.dis
+	/dis/mount.dis
+	/dis/unmount.dis
+	/dis/lib/factotum.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxconv/styxconv.dis
+	/dis/lib/styxpersist.dis
+
+	/dis/ndb/cs.dis
+	/dis/ndb/dns.dis
+	/dis/lib/attrdb.dis
+	/dis/lib/ipattr.dis
+	/lib/ndb/local
+	/lib
+	/lib/ndb
+	/lib/ndb/dns
+	/lib/ndb/inferno
+	/lib/ndb/common
+
+	/dis/mntgen.dis
+	/dis/lib/nametree.dis
+	/dis/lib/styxservers.dis
+
+	/dis/initsheeva
