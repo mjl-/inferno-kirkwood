@@ -95,101 +95,93 @@ init
 root
 	/chan	/
 	/dev	/
-	/dis
+	/dis	/
 	/env	/
 	/fd	/
-	/n
+	/n	/
 	/net	/
 	/nvfs	/
 	/prog	/
-	/dis/lib
-	/dis/lib/encoding
-	/dis/lib/styxconv
-	/dis/ip
-	/dis/ndb
-	/dis/sh
 	/osinit.dis
-	/dis/sh.dis
-	/dis/sh/std.dis
-	/dis/lib/arg.dis
-	/dis/lib/bufio.dis
-	/dis/lib/daytime.dis
-	/dis/lib/env.dis
-	/dis/lib/filepat.dis
-	/dis/lib/readdir.dis
-	/dis/lib/string.dis
-	/dis/lib/regex.dis
-	/dis/lib/styxlib.dis
-	/dis/lib/encoding/base64.dis
-	/dis/ls.dis
-	/dis/date.dis
-	/dis/cd.dis
+
+	/dis/bind.dis
+	/dis/calc.dis
 	/dis/cat.dis
-	/dis/echo.dis
-	/dis/ps.dis
+	/dis/cd.dis
 	/dis/date.dis
 	/dis/dd.dis
 	/dis/dial.dis
+	/dis/echo.dis
 	/dis/ed.dis
 	/dis/export.dis
 	/dis/grep.dis
 	/dis/import.dis
 	/dis/kill.dis
+	/dis/listen.dis
+	/dis/ls.dis
 	/dis/mc.dis
+	/dis/mdb.dis
 	/dis/memfs.dis
 	/dis/mkdir.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
 	/dis/mv.dis
+	/dis/ns.dis
 	/dis/p.dis
+	/dis/ps.dis
+	/dis/pwd.dis
 	/dis/read.dis
 	/dis/rm.dis
+	/dis/sh.dis
 	/dis/sleep.dis
 	/dis/styxlisten.dis
 	/dis/tail.dis
 	/dis/telnet.dis
 	/dis/time.dis
 	/dis/touch.dis
-	/dis/calc.dis
-	/dis/lib/rand.dis
+	/dis/unmount.dis
 	/dis/xd.dis
-	/dis/mdb.dis
-	/dis/lib/dis.dis
-	/dis/pwd.dis
-	/dis/lib/workdir.dis
 
-	/dis/listen.dis
-	/dis/lib/auth.dis
-	/dis/lib/ssl.dis
+	/dis/sh/std.dis
 
 	/dis/ip/dhcp.dis
 	/dis/ip/ping.dis
-	/dis/lib/dhcpclient.dis
-	/dis/lib/ip.dis
-	/dis/lib/random.dis
-	/dis/lib/timers.dis
-
-	/dis/ns.dis
-	/dis/bind.dis
-	/dis/mount.dis
-	/dis/unmount.dis
-	/dis/lib/factotum.dis
-	/dis/lib/styx.dis
-	/dis/lib/styxconv/ostyx.dis
-	/dis/lib/styxconv/styxconv.dis
-	/dis/lib/styxpersist.dis
 
 	/dis/ndb/cs.dis
 	/dis/ndb/dns.dis
+
+	/dis/lib/arg.dis
 	/dis/lib/attrdb.dis
+	/dis/lib/auth.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dis.dis
+	/dis/lib/encoding/base64.dis
+	/dis/lib/env.dis
+	/dis/lib/factotum.dis
+	/dis/lib/filepat.dis
+	/dis/lib/ip.dis
 	/dis/lib/ipattr.dis
-	/lib/ndb/local
-	/lib
-	/lib/ndb
+	/dis/lib/nametree.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/ssl.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxconv/styxconv.dis
+	/dis/lib/styxlib.dis
+	/dis/lib/styxpersist.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/timers.dis
+	/dis/lib/workdir.dis
+
+	/lib/ndb/common
 	/lib/ndb/dns
 	/lib/ndb/inferno
-	/lib/ndb/common
+	/lib/ndb/local
 
-	/dis/mntgen.dis
-	/dis/lib/nametree.dis
-	/dis/lib/styxservers.dis
-
-	/dis/initsheeva
+	/initsheeva /os/kirkwood/misc/initsheeva
