@@ -195,13 +195,24 @@ TEXT splflo(SB), $-4
 	RET
 
 TEXT cpsrr(SB), $-4
-	MOVW		CPSR, R0
+	MOVW	CPSR, R0
 	RET
 
 TEXT spsrr(SB), $-4
-	MOVW		SPSR, R0
+	MOVW	SPSR, R0
 	RET
 
 TEXT idle(SB), $-4
-	MCR		15, 0, R0, C(7), C(0), 4
+	MCR	CpMMU, 0, R0, C(CpPower), C(0), 4
+	RET
+
+TEXT getcpuid(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpCPUID), C(0)
+	RET
+
+TEXT mmuinit(SB), $-4
+	/* enable icache, dcache and mpu */
+	MRC	CpMMU, 0, R0, C(CpControl), C0, 0
+	ORR	$(CpCrrob|CpCIcache|CpCDcache), R0
+	MCR	CpMMU, 0, R0, C(CpControl), C0, 0
 	RET

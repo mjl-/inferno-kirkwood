@@ -386,12 +386,70 @@ setpanic(void)
 	serwrite = serialputs;
 }
 
+int
+isvalidaddr(void *v)
+{
+	return (KZERO == 0 || (ulong)v >= KZERO) && (ulong)v <= (ulong)KADDR((conf.topofmem - 1));
+}
+
+void
+dumplongs(char *msg, ulong *v, int n)
+{
+	int i, l;
+
+	l = 0;
+	iprint("%s at %.8p: ", msg, v);
+	for(i=0; i<n; i++){
+		if(l >= 4){
+			iprint("\n    %.8p: ", v);
+			l = 0;
+		}
+		if(isvalidaddr(v)){
+			iprint(" %.8lux", *v++);
+			l++;
+		}else{
+			iprint(" invalid");
+			break;
+		}
+	}
+	iprint("\n");
+}
+
+void
+_dumpstack(Ureg*)
+{
+	print("dumpstack\n");
+}
+
 void
 dumpstack(void)
 {
 }
 
 void
-dumpregs(Ureg*)
+dumpregs(Ureg* ureg)
 {
+	print("TRAP: %s", trapname(ureg->type));
+	if((ureg->psr & PsrMask) != PsrMsvc)
+		print(" in %s", trapname(ureg->psr));
+	print("\n");
+	print("PSR %8.8uX type %2.2uX PC %8.8uX LINK %8.8uX\n",
+		ureg->psr, ureg->type, ureg->pc, ureg->link);
+	print("R14 %8.8uX R13 %8.8uX R12 %8.8uX R11 %8.8uX R10 %8.8uX\n",
+		ureg->r14, ureg->r13, ureg->r12, ureg->r11, ureg->r10);
+	print("R9  %8.8uX R8  %8.8uX R7  %8.8uX R6  %8.8uX R5  %8.8uX\n",
+		ureg->r9, ureg->r8, ureg->r7, ureg->r6, ureg->r5);
+	print("R4  %8.8uX R3  %8.8uX R2  %8.8uX R1  %8.8uX R0  %8.8uX\n",
+		ureg->r4, ureg->r3, ureg->r2, ureg->r1, ureg->r0);
+	print("Stack is at: %8.8luX\n", ureg);
+	print("PC %8.8lux LINK %8.8lux\n", (ulong)ureg->pc, (ulong)ureg->link);
+
+	if(up)
+		print("Process stack:  %8.8lux-%8.8lux\n",
+			up->kstack, up->kstack+KSTACK-4);
+	else
+		print("System stack: %8.8lux-%8.8lux\n",
+			(ulong)(m+1), (ulong)m+BY2PG-4);
+	dumplongs("stack", (ulong *)(ureg + 1), 16);
+	_dumpstack(ureg);
 }

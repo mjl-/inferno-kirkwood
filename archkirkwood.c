@@ -8,7 +8,7 @@
 #include "../port/netif.h"
 #include "etherif.h"
 
-char *
+static char *
 devidstr(ulong v)
 {
 	switch(v) {
@@ -23,7 +23,7 @@ void
 archconfinit(void)
 {
 	conf.topofmem = 512*1024*124;
-	m->cpuhz = 100;
+	m->cpuhz = 1200*1000*1000;
 	conf.devidstr = devidstr(*(ulong*)AddrDevid);
 }
 
@@ -72,15 +72,34 @@ archether(int ctlno, Ether *e)
 	return -1;
 }
 
+static int watchdoghz = 0; // enable with 1 (hz)
+
+static void
+wdogclock(void)
+{
+	/* update watchdog */
+	TIMERREG->timerwd = CLOCKFREQ/watchdoghz;
+}
+
 void
 archreset(void)
 {
+	/* reset devices to initial state */
+	if(watchdoghz){
+		addclock0link(wdogclock, watchdoghz);
+		TIMERREG->timerwd = CLOCKFREQ/watchdoghz;
+		TIMERREG->ctl |= TmrWDenable;
+		CPUCSREG->rstout |= RstoutWatchdog;
+	}
 }
 
 void
 archreboot(void)
 {
+	CPUCSREG->rstout = RstoutSoft;
+	CPUCSREG->softreset = ResetSystem;
 }
+
 
 void
 archconsole(void)

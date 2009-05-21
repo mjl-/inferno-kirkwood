@@ -39,6 +39,7 @@ main(void)
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
 
+	mmuinit();
 	quotefmtinstall();
 	archreset();
 	confinit();
@@ -58,9 +59,11 @@ iprint("chandevreset\n");
 
 	kbdinit();
 
+	print("%ld MHz id %8.8lux\n", (m->cpuhz+500000)/1000000, getcpuid());
 	print("\nInferno %s\n", VERSION);
 	print("Vita Nuova\n");
-	print("conf %s (%lud) jit %d kirkwood %s\n\n", conffile, kerndate, cflag, conf.devidstr);
+	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
+	print("kirkwood %s\n\n", conf.devidstr);
 
 	userinit();
 	schedinit();
@@ -184,8 +187,7 @@ exit(int inpanic)
 			clockpoll();
 	}
 
-	CPUCSREG->rstout = RstoutSoft;
-	CPUCSREG->softreset = ResetSystem;
+	archreboot();
 }
 
 static void

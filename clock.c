@@ -10,6 +10,7 @@
 typedef struct Clock0link Clock0link;
 typedef struct Clock0link {
 	void		(*clock)(void);
+	ulong		tm;
 	Clock0link*	link;
 } Clock0link;
 
@@ -18,7 +19,7 @@ static Lock clock0lock;
 
 
 Timer*
-addclock0link(void (*clock)(void), int)
+addclock0link(void (*clock)(void), int ticks)
 {
 	Clock0link *lp;
 
@@ -28,6 +29,7 @@ addclock0link(void (*clock)(void), int)
 	}
 	ilock(&clock0lock);
 	lp->clock = clock;
+	lp->tm = ticks;
 	lp->link = clock0link;
 	clock0link = lp;
 	iunlock(&clock0lock);
@@ -45,7 +47,7 @@ clockintr(Ureg*, void*)
 
 	if(canlock(&clock0lock)){
 		for(lp = clock0link; lp; lp = lp->link)
-			if(lp->clock)
+			if(m->ticks % lp->tm == 0)
 				lp->clock();
 		unlock(&clock0lock);
 	}
@@ -61,7 +63,7 @@ clockinit(void)
 
 	m->ticks = 0;
 
-	tmr->timer0 = tmr->reload0 = CLOCKFREQ/100;
+	tmr->timer0 = tmr->reload0 = CLOCKFREQ/HZ;
 	tmr->ctl = Tmr0enable|Tmr0periodic;
 
 	intrenable(Irqbridge, IRQcputimer0, clockintr, nil, "timer0");

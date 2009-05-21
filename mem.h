@@ -54,3 +54,38 @@
 #define PsrC		0x20000000	/* carry/borrow/extend */
 #define PsrZ		0x40000000	/* zero */
 #define PsrN		0x80000000	/* negative/less than */
+
+/*
+ * Coprocessors
+ */
+ 
+#define CpMMU		15
+
+/*
+ * Internal MMU coprocessor registers
+ */
+#define CpCPUID		0		/* R: opcode_2 is 0*/
+#define CpCacheID	0
+#define	CpControl	1		/* R/W: control (opcode_2 is 0) */
+#define CpTTB		2		/* R/W: translation table base */
+#define CpDAC		3		/* R/W: domain access control */
+#define CpFSR		5		/* R/W: fault status */
+#define CpFAR		6		/* R/W: fault address */
+#define	CpPower		7		/* W: Power Commands */
+#define CpTLBops	8		/* W: TLB operations */
+#define	CpTCM		9		/* R/W: Tightly Coupled Memory */
+#define CpTLBLk		10		/* W: TLB lock down */
+
+/*
+ * CpControl bits
+ */
+#define CpCmmu	(1<<0)	/* M: MMU enable */
+#define CpCalign	(1<<1)	/* A: alignment fault enable */
+#define CpCDcache	(1<<2)	/* C: data cache on */
+#define CpCbe		(1<<7)	/* B: big-endian operation */
+#define CpCsystem	(1<<8)	/* S: system permission */
+#define CpCrom	(1<<9)	/* R: ROM permission */
+#define CpCIcache	(1<<12)	/* I: Instruction Cache on */
+#define CpCaltivec	(1<<13)	/* V: exception vector relocation */
+#define	CpCrrob		(1<<14)	/* RR: cache replacement strategy */
+#define CpCl4		(1<<15)	/* L4: set T bit on PC loads */

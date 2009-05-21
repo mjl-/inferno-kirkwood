@@ -71,3 +71,6 @@ ui$CONF.gz: i$CONF
 	cd ../init; mk $INIT.dis
 
 main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+vclean:V: clean
+	rm -f ui$CONF ui$CONF.gz
