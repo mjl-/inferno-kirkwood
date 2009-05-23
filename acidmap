@@ -1,0 +1,4 @@
+ktzero=0x8000;		// kernel text segment load address
+map({"text", ktzero, map()[0][2]+ktzero - 0x1020, 0x20});
+
+print("$ROOT/os/kirkwood/acidmap");

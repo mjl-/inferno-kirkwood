@@ -27,7 +27,7 @@ enum {
 	AddrGbe0 =	Intrbase+0x72000,
 	AddrGbe1 =	Intrbase+0x76000,
 
-	AddrSDIO =	Intrbase+0x90000,
+	AddrSdio =	Intrbase+0x90000,
 };
 
 enum {
@@ -369,18 +369,19 @@ struct GbeReg
 	ulong	dfut[4];
 };
 
-#define SDIOREG	((SDIOReg*)AddrSDIO)
-typedef struct SDIOReg SDIOReg;
-struct SDIOReg
+#define SDIOREG	((SdioReg*)AddrSdio)
+typedef struct SdioReg SdioReg;
+struct SdioReg
 {
-	ulong	dmaaddrhi;
 	ulong	dmaaddrlo;
+	ulong	dmaaddrhi;
 	ulong	blksize;
 	ulong	blkcount;
 	ulong	argcmdlo;
 	ulong	argcmdhi;
 	ulong	txmode;
-	ulong	rsphalf[8];
+	ulong	cmd;
+	ulong	resp[8];
 	ulong	fifo;
 	ulong	crc7rsp;
 	ulong	hwstate;
@@ -402,13 +403,12 @@ struct SDIOReg
 	ulong	acmd12arghi;
 	ulong	acmd12idx;
 	ulong	acmdrsp[3];
+	ulong	pad1[PAD(0x90100, 0x90098)];
 	ulong	mbusctllo;
 	ulong	mbusctlhi;
-	
 	struct {
 	       ulong	ctl;
 	       ulong	data;
-	       ulong	pad1;
 	} win[4];
 	ulong	clkdiv;
 	ulong	addrdecerr;

@@ -65,6 +65,8 @@ iprint("chandevreset\n");
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
 	print("kirkwood %s\n\n", conf.devidstr);
 
+	print("scratch memory: %#8.8lux\n", xspanalloc(8*1024, 0x1000, 0));
+
 	userinit();
 	schedinit();
 }

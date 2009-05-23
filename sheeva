@@ -15,6 +15,7 @@ dev
 	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum iprouter plan9 nullmedium pktmedium
 	crypto
 	ether netif netaux
+	sdio
 	sheeva
 
 ip
@@ -102,6 +103,7 @@ root
 	/net	/
 	/nvfs	/
 	/prog	/
+	/tmp	/
 	/osinit.dis
 
 	/dis/bind.dis
@@ -141,6 +143,8 @@ root
 	/dis/touch.dis
 	/dis/unmount.dis
 	/dis/xd.dis
+	/dis/dossrv.dis
+	/dis/zeros.dis
 
 	/dis/sh/std.dis
 

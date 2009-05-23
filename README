@@ -1,12 +1,14 @@
 # status
 
-boots, uses uart as console, rtc, runs dis programs, basic network support (dhcp & mount working).
+boots, uses uart as console, rtc, runs dis programs, basic network support (dhcp & mount working), might read a bit of non-sdhc sd cards.
 
 next steps:
 - find problems/crashes
 - more ethernet (link changes, more proper init, more efficient packet handling)
-- storage (sdio? nand?)
-- l1/l2 caches?
+- more sdio (make much more stable, detect card changes, use user buffer without crashing, support sdhc, and much more)
+- flush data cache around dma
+- l2 caches
+- nand
 - improve uart (mode setting)
 - crypto support
 - later: usb,twsi,spi,gpio,sata,audio(i2s),efuse,pciexpress,xor

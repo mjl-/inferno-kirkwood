@@ -1,0 +1,2 @@
+echo 'asm(main)' | i acid -l acidmap isheeva
+echo 'dump(ktzero, etext-ktzero, "i")' | i acid -l acidmap isheeva
