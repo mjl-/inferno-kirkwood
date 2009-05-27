@@ -15,56 +15,7 @@
  * http://www.sdcard.org/developers/tech/sdcard/pls/Simplified_Physical_Layer_Spec.pdf
  */
 
-#define dprint	if(0)print
-
-typedef struct Cid Cid;
-typedef struct Csd Csd;
-
-struct Cid
-{
-	uint	mid;		/* manufacturer id */
-	char	oid[2+1];	/* oem id */
-	char	prodname[5+1];	/* product name */
-	uint	rev;		/* product revision */
-	ulong	serial;
-	int	year;
-	int	mon;
-};
-
-/* xxx make shorter but still readable names */
-struct Csd
-{
-	int	version;
-	int	taac, nsac;
-	int	xferspeed;
-	int	cmdclasses;
-	int	readblocklength, readblockpartial;
-	int	writeblockmisalign, readblockmisalign;
-	int	dsr;
-	int	devsize;
-	union {
-		struct {
-			int	vddrmin, vddrmax, vddwmin, vddwmax;
-			int	devsizemult;
-		} v0;
-	};
-	int	eraseblockenable, erasesectorsize;
-	int	wpgroupsize, wpgroupenable;
-	int	writespeedfactor;
-	int	writeblocklength, writeblockpartial;
-	int	fileformatgroup;
-	int	copy;
-	int	permwriteprotect, tmpwriteprotect;
-	int	fileformat;
-};
-
-/* xxx remove global data about inserted card... */
-static Cid lastcid;
-static int lastcidok;
-static Csd lastcsd;
-static int lastcsdok;
-static int sectorsize = 512;
-
+#define dprint	if(1)print
 
 char Enotimpl[] = "not yet implemented";
 char Ecmdfailed[] = "sd command failed";
@@ -76,22 +27,21 @@ enum {
 	SDError		= -3,
 };
 
-#define MASK(x)	(((uvlong)1<<(x))-1)
+#define MASK(x)	(((ulong)1<<(x))-1)
 enum {
-	/* all registers in the controller are 16 bit */
-	Mask16		= (1<<16)-1,
-
 	/* transfer mode */
 	TMautocmd12	= 1<<2,
 	TMxfertohost	= 1<<4,
 	TMswwrite	= 1<<6,
 
 	/* cmd */
+	Respmax		= (136+7)/8,
 #define CMDresp(x)	((x)<<0)
 	CMDrespnone	= 0<<0,
 	CMDresp136	= 1<<0,
 	CMDresp48	= 2<<0,
 	CMDresp48busy	= 3<<0,
+
 	CMDdatacrccheck	= 1<<2,
 	CMDcmdcrccheck	= 1<<3,
 	CMDcmdindexcheck	= 1<<4,
@@ -174,12 +124,70 @@ enum {
 	ACMD41ready		= 1<<31,
 };
 
+
+typedef struct Card Card;
+typedef struct Cid Cid;
+typedef struct Csd Csd;
+
+struct Cid
+{
+	uint	mid;		/* manufacturer id */
+	char	oid[2+1];	/* oem id */
+	char	prodname[5+1];	/* product name */
+	uint	rev;		/* product revision */
+	ulong	serial;
+	int	year;
+	int	mon;
+};
+
+/* xxx make shorter but still readable names */
+struct Csd
+{
+	int	version;
+	int	taac, nsac;
+	int	xferspeed;
+	int	cmdclasses;
+	int	readblocklength, readblockpartial;
+	int	writeblockmisalign, readblockmisalign;
+	int	dsr;
+	int	size;
+	union {
+		struct {
+			int	vddrmin, vddrmax, vddwmin, vddwmax;
+			int	sizemult;
+		} v0;
+	};
+	int	eraseblockenable, erasesectorsize;
+	int	wpgroupsize, wpgroupenable;
+	int	writespeedfactor;
+	int	writeblocklength, writeblockpartial;
+	int	fileformatgroup;
+	int	copy;
+	int	permwriteprotect, tmpwriteprotect;
+	int	fileformat;
+};
+
+struct Card {
+	int	valid;
+	Cid	cid;
+	Csd	csd;
+	ulong	bs;
+	uvlong	size;
+	int	mmc;
+	int	sd2;
+	int	sdhc;
+	uint	rca;
+	uchar	resp[Respmax];
+};
+
+static Card card;
+
+
 enum {
 	Qdir,
 	Qctl,
 	Qcid,
 	Qcsd,
-	Qraw,
 	Qdata,
 };
 
@@ -189,10 +197,59 @@ Dirtab sdiotab[]={
 	"sdioctl",	{Qctl, 0},	0,	0666,
 	"sdiocid",	{Qcid, 0},	0,	0444,
 	"sdiocsd",	{Qcsd, 0},	0,	0444,
-	"sdioraw",	{Qraw, 0},	0,	0666,
 	"sdiodata",	{Qdata, 0},	0,	0666,
 };
 
+static void
+delay(void)
+{
+	volatile int i;
+	
+	for(i = 0; i < 128*1024; i++)
+		{}
+}
+
+static int
+min(int a, int b)
+{
+	if(a < b)
+		return a;
+	return b;
+}
+
+static ulong
+bits(uchar *p, int msb, int lsb)
+{
+	ulong v;
+	int nbits, o, n;
+
+	nbits = msb-lsb+1;
+	n = lsb/8;
+	p += n;
+	lsb -= n*8;
+
+	n = min(nbits, 8-lsb);
+	nbits -= n;
+	v = (*p++>>lsb)&MASK(n);
+	o = n;
+
+	while(nbits > 0) {
+		n = min(nbits, 8);
+		nbits -= n;
+		v |= ((ulong)*p++ & MASK(n)) << o;
+		o += n;
+	}
+	return v;
+}
+
+static void
+putle(uchar *p, uvlong v, int n)
+{
+	while(n-- > 0) {
+		*p++ = v;
+		v >>= 8;
+	}
+}
 
 /* xxx should make difference between app and non-app commands? */
 /* xxx make this less ugly */
@@ -218,48 +275,39 @@ getresptype(ulong cmd)
 	return CMDresp48;
 }
 
-static void
-delay(void)
-{
-	volatile int i;
-	
-	for(i = 0; i < 128*1024; i++)
-		{}
-}
-
 int
-sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
+sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 {
 	SdioReg *reg = SDIOREG;
 	int i, s;
 	ulong resptype, cmdopts, txmode, v, need;
-	uvlong lo, hi;
+	uvlong w;
 
 	i = 0;
 	for(;;) {
 		if((reg->hwstate&(HScmdinhibit|HScardbusy)) == 0)
 			break;
-		if(i++ >= 100) {
+		if(i++ >= 50) {
 			print("card busy\n");
 			return SDCardbusy;
 		}
-		delay();
+		tsleep(&up->sleep, return0, nil, 1);
 	}
 
 	/* "next command is sd application specific" */
-	if(isapp && (s = sdcmd0(0, 55, 0, rca<<16, r)) < 0)
+	if(isapp && (s = sdcmd0(c, 0, 55, card.rca<<16)) < 0)
 		return s;
 
-	dprint("sdcmd, isapp %lux, cmd %lud, arg %#lux\n", isapp, cmd, arg);
+	dprint("sdcmd, isapp %d, cmd %lud, arg %#lux\n", isapp, cmd, arg);
 
 	/* clear status */
-	reg->norintrstat = Mask16&~0;
-	reg->errintrstat = Mask16&~0;
-	reg->acmd12errstat = Mask16&~0;
+	reg->norintrstat = MASK(16)&~0;
+	reg->errintrstat = MASK(16)&~0;
+	reg->acmd12errstat = MASK(16)&~0;
 
 	/* prepare args & execute command */
-	reg->argcmdlo = Mask16&(arg>>0);
-	reg->argcmdhi = Mask16&(arg>>16);
+	reg->argcmdlo = MASK(16)&(arg>>0);
+	reg->argcmdhi = MASK(16)&(arg>>16);
 	cmdopts = 0;
 	txmode = 0;
 	if(cmd == 17 || cmd == 18) {
@@ -275,7 +323,6 @@ sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
 	reg->txmode = txmode;
 	resptype = getresptype(cmd);
 	reg->cmd = CMDresp(resptype)|cmdopts|CMDcmd(cmd);
-	dprint("sent: %04lux %04lux %04lux %04lux\n", reg->argcmdlo, reg->argcmdhi, reg->txmode, reg->cmd);
 
 	/* poll for completion/error */
 	i = 0;
@@ -298,110 +345,78 @@ sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
 		}
 		delay();
 	}
-	dprint("success, status %04lux %04lux\n", reg->norintrstat, reg->errintrstat);
-
-	dprint("r %08lux %08lux %08lux %08lux %08lux %08lux %08lux %08lux\n",
-		reg->resp[0],
-		reg->resp[1],
-		reg->resp[2],
-		reg->resp[3],
-		reg->resp[4],
-		reg->resp[5],
-		reg->resp[6],
-		reg->resp[7]);
+	if(0)print("success, status %04lux %04lux\n", reg->norintrstat, reg->errintrstat);
 
 	/* fetch the response */
-	r[0] = 0;
-	r[1] = 0;
+	memset(c->resp, '\0', Respmax);
 	switch(resptype) {
 	case CMDrespnone:
 		break;
 	case CMDresp136:
-		/* xxx horrible kludge... will probably change this (and below for 48 bit case) to start the real data at offset 8, to match the sd specs and thus make understanding code easier */
-		lo = 0;
-		hi = 0;
-		lo |= MASK(14)&(uvlong)reg->resp[7]<<0;
-		lo |= (uvlong)reg->resp[6]<<(1*16-2);
-		lo |= (uvlong)reg->resp[5]<<(2*16-2);
-		lo |= (uvlong)reg->resp[4]<<(3*16-2);
-		lo |= (uvlong)reg->resp[3]<<(4*16-2);
-		hi |= (uvlong)reg->resp[3]>>2;
-		hi |= (uvlong)reg->resp[2]<<(1*16-2);
-		hi |= (uvlong)reg->resp[1]<<(2*16-2);
-		hi |= (uvlong)reg->resp[0]<<(3*16-2);
-		r[0] = hi;
-		r[1] = lo;
+		w = 0;
+		w |= (uvlong)reg->resp[7]&MASK(14);
+		w |= (uvlong)reg->resp[6]<<(0*16+14);
+		w |= (uvlong)reg->resp[5]<<(1*16+14);
+		w |= (uvlong)reg->resp[4]<<(2*16+14);
+		w |= (uvlong)reg->resp[3]<<(3*16+14);
+		putle(c->resp+1, w, 8);
+
+		w = 0;
+		w |= (uvlong)reg->resp[3]>>2;
+		w |= (uvlong)reg->resp[2]<<(0*16+14);
+		w |= (uvlong)reg->resp[1]<<(1*16+14);
+		w |= (uvlong)reg->resp[0]<<(2*16+14);
+		putle(c->resp+1+8, w, 8);
 		break;
 	case CMDresp48:
 	case CMDresp48busy:
-		lo = 0;
-		lo |= MASK(6)&(uvlong)reg->resp[2];
-		lo |= (uvlong)reg->resp[1]<<(0*16+6);
-		lo |= (uvlong)reg->resp[0]<<(1*16+6);
-		r[0] = 0;
-		r[1] = lo;
+		w = 0;
+		w |= (uvlong)reg->resp[2]&MASK(6);
+		w |= (uvlong)reg->resp[1]<<(0*16+6);
+		w |= (uvlong)reg->resp[0]<<(1*16+6);
+		putle(c->resp+1, w, 4);
 		break;
 	}
 	return 0;
 }
 
 int
-sdcmd(ulong cmd, ulong arg, uvlong r[])
+sdcmd(Card *c, ulong cmd, ulong arg)
 {
-	return sdcmd0(0, cmd, 0, arg, r);
+	return sdcmd0(c, 0, cmd, arg);
 }
 
 int
-sdacmd(ulong cmd, ulong rca, ulong arg, uvlong r[])
+sdacmd(Card *c, ulong cmd, ulong arg)
 {
-	return sdcmd0(1, cmd, rca, arg, r);
+	return sdcmd0(c, 1, cmd, arg);
 }
 
-
-static void
-p32(uchar *p, ulong v)
+static int
+parsecid(Cid *c, uchar *r)
 {
-	*p++ = v>>24;
-	*p++ = v>>16;
-	*p++ = v>>8;
-	*p++ = v>>0;
-	USED(p);
-}
+	uchar *p;
 
-static void
-p16(uchar *p, uint v)
-{
-	*p++ = v>>8;
-	*p++ = v>>0;
-	USED(p);
-}
+	c->mon		= bits(r, 11, 8);
+	c->year		= 2000 + bits(r, 19, 16)*10 + bits(r, 15, 12);
+	c->serial	= bits(r, 55, 24);
+	c->rev		= bits(r, 63, 56);
 
-/*
- * p75 describes the cid register.
- * we don't have the lowest 8 bits, so all offsets are off by 8.
- */
-static void
-getcid(uvlong r[], Cid *c)
-{
-	ulong v;
+	p = r+64/8;
+	c->prodname[0] = p[4];
+	c->prodname[1] = p[3];
+	c->prodname[2] = p[2];
+	c->prodname[3] = p[1];
+	c->prodname[4] = p[0];
+	c->prodname[5] = '\0';
 
-	/* xxx make this use bits() to prevent excessive eye bleed... */
+	p = r+104/8;
+	c->oid[0] = p[1];
+	c->oid[1] = p[0];
+	c->oid[2] = '\0';
 
-	c->mon = (r[1]>>0)&MASK(4);
-	v = (r[1]>>4)&MASK(8);
-	c->year = 2000 + 10*(v>>4) + (v&MASK(4));
-	/* 4 bits reserved */
-	c->serial = (r[1]>>(4+8+4))&MASK(32);
-	c->rev = (r[1]>>(4+8+4+32))&MASK(8);
-
-	c->prodname[5] = 0;
-	c->prodname[4] = (r[1]>>(4+8+4+32+8))&MASK(8);
-	p32((uchar*)c->prodname, (r[0]>>0)&MASK(32));
-
-	c->oid[2] = 0;
-	p16((uchar*)c->oid, (r[0]>>32)&MASK(16));
-
-	c->mid = (r[0]>>(32+16))&MASK(8);
+	c->mid		= bits(r, 127, 120);
+	return 0;
 }
 
 static char*
@@ -409,7 +424,7 @@ cidstr(Cid *c, char *p, int n)
 {
 	
 	snprint(p, n,
-		"product %s, rev %#ux, serial %#lux, made %04d-%02d, oem %s, manufacturer %#ux",
+		"product %s, rev %#ux, serial %#lux, made %04d-%02d, oem %s, manufacturer %#ux\n",
 		c->prodname,
 		c->rev,
 		c->serial,
@@ -419,64 +434,44 @@ cidstr(Cid *c, char *p, int n)
 	return p;
 }
 
-static ulong
-bits(int msb, int lsb, uvlong v[2])
-{
-	if(msb <= 63)
-		return (v[1]>>lsb)&MASK(msb-lsb+1);
-	if(lsb > 63)
-		return (v[0]>>(lsb-64))&MASK(msb-lsb+1);
-	return ((v[0]&MASK(msb-64+1))<<(63-lsb+1)) | ((v[1]>>lsb)&MASK(63-lsb+1));
-}
-
 static int
-getcsd(uvlong or[], Csd *c)
+parsecsd(Csd *c, uchar *r)
 {
-	uvlong r[2];
-
-	r[0] = (or[0]<<8)|(or[1]>>56);
-	r[1] = or[1]<<8;
-
-	dprint("getcsd, %016llux %016llux\n", r[0], r[1]);
-
-	/* we only know of version 0 and 1 */
-	c->version = bits(127, 126, r);
-	if(c->version > 1)
+	c->version = bits(r, 127, 126);
+	if(c->version != 0 && c->version != 1)
 		return -1;
 
-	c->taac			= bits(119, 112, r);
-	c->nsac			= bits(111, 104, r);
-	c->xferspeed		= bits(103, 96, r);
-	c->cmdclasses		= bits(95, 84, r);
-	c->readblocklength	= bits(83, 80, r);
-	c->readblockpartial	= bits(79, 79, r);
-	c->writeblockmisalign	= bits(78, 78, r);
-	c->readblockmisalign	= bits(77, 77, r);
-	c->dsr			= bits(76, 76, r);
+	c->taac			= bits(r, 119, 112);
+	c->nsac			= bits(r, 111, 104);
+	c->xferspeed		= bits(r, 103, 96);
+	c->cmdclasses		= bits(r, 95, 84);
+	c->readblocklength	= bits(r, 83, 80);
+	c->readblockpartial	= bits(r, 79, 79);
+	c->writeblockmisalign	= bits(r, 78, 78);
+	c->readblockmisalign	= bits(r, 77, 77);
+	c->dsr			= bits(r, 76, 76);
 	if(c->version == 0) {
-		c->devsize	= bits(75, 62, r);
-		c->v0.vddrmin	= bits(61, 59, r);
-		c->v0.vddrmax	= bits(58, 56, r);
-		c->v0.vddwmin	= bits(55, 53, r);
-		c->v0.vddwmax	= bits(52, 50, r);
-		c->v0.devsizemult	= bits(49, 47, r);
+		c->size		= bits(r, 75, 62);
+		c->v0.vddrmin	= bits(r, 61, 59);
+		c->v0.vddrmax	= bits(r, 58, 56);
+		c->v0.vddwmin	= bits(r, 55, 53);
+		c->v0.vddwmax	= bits(r, 52, 50);
+		c->v0.sizemult	= bits(r, 49, 47);
 	} else {
-		c->devsize	= bits(69, 48, r);
+		c->size		= bits(r, 69, 48);
 	}
-	c->eraseblockenable	= bits(46, 46, r);
-	c->erasesectorsize	= bits(45, 39, r);
-	c->wpgroupsize		= bits(38, 32, r);
-	c->wpgroupenable	= bits(31, 31, r);
-	c->writespeedfactor	= bits(28, 26, r);
-	c->writeblocklength	= bits(25, 22, r);
-	c->writeblockpartial	= bits(21, 21, r);
-	c->fileformatgroup	= bits(15, 15, r);
-	c->copy			= bits(14, 14, r);
-	c->permwriteprotect	= bits(13, 13, r);
-	c->tmpwriteprotect	= bits(12, 12, r);
-	c->fileformat		= bits(11, 10, r);
-
-	dprint("fileformat %x, bits %lux, shifted %llux, mask %llux, v %llux\n", c->fileformat, bits(11, 10, r), r[1]>>10, MASK(11-10+1), (r[1]>>10)&MASK(11-10+1));
+	c->eraseblockenable	= bits(r, 46, 46);
+	c->erasesectorsize	= bits(r, 45, 39);
+	c->wpgroupsize		= bits(r, 38, 32);
+	c->wpgroupenable	= bits(r, 31, 31);
+	c->writespeedfactor	= bits(r, 28, 26);
+	c->writeblocklength	= bits(r, 25, 22);
+	c->writeblockpartial	= bits(r, 21, 21);
+	c->fileformatgroup	= bits(r, 15, 15);
+	c->copy			= bits(r, 14, 14);
+	c->permwriteprotect	= bits(r, 13, 13);
+	c->tmpwriteprotect	= bits(r, 12, 12);
+	c->fileformat		= bits(r, 11, 10);
 
 	return 0;
 }
@@ -493,12 +488,12 @@ csdstr(Csd *c, char *p, int n)
 			"vddrmax %x\n"
 			"vddwmin %x\n"
 			"vddwmax %x\n"
-			"devsizemult %x\n",
+			"sizemult %x\n",
 			c->v0.vddrmin,
 			c->v0.vddrmax,
 			c->v0.vddwmin,
 			c->v0.vddwmax,
-			c->v0.devsizemult);
+			c->v0.sizemult);
 	snprint(p, n,
 		"version %x\n"
 		"taac %x\n"
@@ -534,7 +529,7 @@ csdstr(Csd *c, char *p, int n)
 		c->writeblockmisalign,
 		c->readblockmisalign,
 		c->dsr,
-		c->devsize,
+		c->size,
 		versbuf,
 		c->eraseblockenable,
 		c->erasesectorsize,
@@ -552,147 +547,134 @@ csdstr(Csd *c, char *p, int n)
 }
 
 
-/*
- * undoubtly, the timings/polling/error checking is all bogus here, and it's a miracle my sd card works (sometimes).  will clean after another read of the sd specs.
- */
 static void
 sdinit(void)
 {
-	uvlong r[2];
-	int i;
-	int s;
-	int sd2, mmc, sdhc;
-	Cid cid;
-	Csd csd;
-	ulong v, ocr, rca, status;
-	char *buf;
+	int i, s;
+	ulong v;
 
 	/* force card to idle state */
-	if(sdcmd(0, 0, r) < 0)
+	if(sdcmd(&card, 0, 0) < 0)
 		error("reset failed (cmd0)");
 
 	/*
-	 * "send interface command".  only >=2.00 cards will respond to this.
-	 * we send it a check pattern and the voltage range we can do.
-	 * if we get a timeout we know the card is not 2.00 or doesn't support the voltage.
+	 * "send interface command".  only >=2.00 cards will respond.
+	 * we send a check pattern and supported voltage range.
+	 * if we get a timeout we know the card is not 2.00
+	 * or doesn't support the voltage.
 	 */
-	sd2 = 0;
-	s = sdcmd(8, CMD8voltage|CMD8pattern, r);
+	card.mmc = 0;
+	card.sd2 = 0;
+	card.sdhc = 0;
+	card.rca = 0;
+	s = sdcmd(&card, 8, CMD8voltage|CMD8pattern);
 	if(s == SDOk) {
-		sd2 = 1;
-		if((r[1]&CMD8patternmask) != CMD8pattern)
+		card.sd2 = 1;
+		v = bits(card.resp+1, 31, 0);
+		if((v & CMD8patternmask) != CMD8pattern)
 			error("sd check pattern mismatch (cmd8)");
-		if((r[1]&CMD8voltagemask) != CMD8voltage)
+		if((v & CMD8voltagemask) != CMD8voltage)
 			error("sd voltage not supported (cmd8)");
-	} else if(s == SDTimeout)
-		sd2 = 0;
-	else
+	} else if(s != SDTimeout)
 		error("sd2 voltage exchange failed (cmd8)");
-	dprint("cmd8 done, sd2 %d\n", sd2);
+	dprint("cmd8 done, sd2 %d\n", card.sd2);
 
 	/*
 	 * "send host capacity support information".
-	 * we send the voltages we understand, and that we understand sdhc cards. (xxx but we don't yet!)
-	 * mmc cards will not respond.  sd cards will, and tell us if they are sdhc.
+	 * we send supported voltages & our sdhc support.
+	 * mmc cards won't respond.  sd cards will power up and indicate
+	 * if they support sdhc.
 	 */
-	mmc = 0;
-	sdhc = 0;
-	for(i = 0;; i++) {
+	i = 0;
+	for(;;) {
 		v = ACMD41sdhcsupported|ACMD41voltagewindow;
-		s = sdacmd(41, 0, v, r);
+		s = sdacmd(&card, 41, v);
 		if(s == SDTimeout) {
-			if(sd2)
+			if(card.sd2)
 				error("sd >=2.00 card not responding to acmd41");
-			mmc = 1;
+			card.mmc = 1;
 			break;
 		}
 		if(s < 0)
 			error("exchange voltage/sdhc support info failed (acmd41)");
-		ocr = r[1];
-		dprint("amd41 response, ocr %#08lux\n", ocr);
-		if((ocr & ACMD41voltagewindow) == 0)
+		v = bits(card.resp+1, 31, 0);
+		if((v & ACMD41voltagewindow) == 0)
 			error("voltage not supported (acmd41)");
-		/* sdhc support must only be checked for the first response */
-		if(ocr & ACMD41ready) {
-			sdhc = (ocr & ACMD41sdhcsupported) != 0;
+		if(v & ACMD41ready) {
+			card.sdhc = (v & ACMD41sdhcsupported) != 0;
 			break;
 		}
 
-		if(i >= 50)
+		if(i >= 20)
 			error("sd card failed to power up (acmd41)");
-		tsleep(&up->sleep, return0, nil, 10);
+		tsleep(&up->sleep, return0, nil, 5);
 	}
-	print("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", mmc, sd2, sdhc);
-	if(mmc)
+	print("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", card.mmc, card.sd2, card.sdhc);
+	if(card.mmc)
 		error("mmc cards not yet supported"); // xxx p14 says this involves sending cmd1
 
-	tsleep(&up->sleep, return0, nil, 10);
-	if(sdcmd(2, 0, r) < 0)
+	if(sdcmd(&card, 2, 0) < 0)
 		error("send card identification failed (cmd2)");
-	getcid(r, &cid);
-	lastcid = cid;
-	lastcidok = 1;
+	if(parsecid(&card.cid, card.resp) < 0)
+		error("bad cid register");
 
-	buf = malloc(READSTR);
-	if(buf == nil)
-		error(Enomem);
-	dprint("cmd2 done, cid %s\n", cidstr(&cid, buf, READSTR));
-	free(buf);
+	i = 0;
+	for(;;) {
+		if(sdcmd(&card, 3, 0) < 0)
+			error("send relative address failed (cmd3)");
+		card.rca = bits(card.resp+1, 31, 16);
+		v = bits(card.resp+1, 15, 0);
+		dprint("have card rca %ux, status %lux\n", card.rca, v);
+		USED(v);
+		if(card.rca != 0)
+			break;
+		if(i++ == 10)
+			error("card insists on invalid rca 0");
+	}
 
-	if(sdcmd(3, 0, r) < 0)
-		error("send relative address failed (cmd3)");
-	rca = r[1]>>16;
-	status = r[0]&MASK(16);
-	dprint("have card rca %lux, status %lux\n", rca, status);
-
-	if(sdcmd(9, rca<<16, r) < 0)
+	if(sdcmd(&card, 9, card.rca<<16) < 0)
 		error("send csd failed (cmd9)");
-	getcsd(r, &csd);
-	lastcsd = csd;
-	lastcsdok = 1;
+	if(parsecsd(&card.csd, card.resp) < 0)
+		error("bad csd register");
 
-	buf = malloc(READSTR);
-	if(buf == nil)
-		error(Enomem);
-	dprint("cmd9 done\n");
-	dprint("%s", csdstr(&csd, buf, READSTR));
-	free(buf);
-
-	if(csd.version == 0) {
-		sectorsize = 1<<csd.readblocklength;
-		print("csd v0, block length read/write %d/%d, size %,lld bytes, eraseblock %d\n",
-			1<<csd.readblocklength, 
-			1<<csd.writeblocklength,
-			((vlong)csd.devsize+1)*((vlong)1<<(csd.v0.devsizemult+2))*((vlong)1<<csd.readblocklength),
-			(1<<csd.writeblocklength)*(csd.erasesectorsize+1));
+	if(card.csd.version == 0) {
+		card.bs = 1<<card.csd.readblocklength;
+		card.size = card.csd.size+1;
+		card.size *= 1<<(card.csd.v0.sizemult+2);
+		card.size *= 1<<card.csd.readblocklength;
+		print("csd0, block length read/write %d/%d, size %,lld bytes, eraseblock %d\n",
+			1<<card.csd.readblocklength, 
+			1<<card.csd.writeblocklength,
+			card.size,
+			(1<<card.csd.writeblocklength)*(card.csd.erasesectorsize+1));
 	} else {
-		sectorsize = 512;
-		print("csd v1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n",
-			((vlong)csd.devsize+1)*512*1024);
+		card.bs = 512;
+		card.size = (vlong)(card.csd.size+1)*card.bs*1024;
+		print("csd1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
 
-	if(sdcmd(7, rca<<16, r) < 0)
+	if(sdcmd(&card, 7, card.rca<<16) < 0)
 		error("card select failed (cmd7)");
 
 	dprint("card selected\n");
 
-	if(sdacmd(6, rca, (1<<1), r) < 0)
+	if(sdacmd(&card, 6, (1<<1)) < 0)
 		error("set buswidth to 4-bit failed (acmd6)");
 
 	dprint("talking in 4-bit width\n");
 
 	/* this is mandatory.  sd spec says this cannot be done if reads can't be partial, but that's probably wrong. */
-	if(sdcmd(16, 512, r) < 0)
+	if(sdcmd(&card, 16, 512) < 0)
 		error("set block length failed (cmd16)");
 	print("block length set\n");
+	card.valid = 1;
 }
 
 
 static long
 sdio(uchar *a, long n, vlong offset, int iswrite)
 {
-	uvlong r[2];
 	SdioReg *reg = SDIOREG;
 	uchar *buf;
 
@@ -718,11 +700,11 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 		nexterror();
 	}
 
-	reg->dmaaddrlo = (ulong)buf&Mask16;
-	reg->dmaaddrhi = ((ulong)buf>>16)&Mask16;
+	reg->dmaaddrlo = (ulong)buf&MASK(16);
+	reg->dmaaddrhi = ((ulong)buf>>16)&MASK(16);
 	reg->blksize = 512;
 	reg->blkcount = n/512;
-	if(sdcmd(18, (ulong)offset, r) < 0)
+	if(sdcmd(&card, 18, (ulong)offset) < 0)
 		error("read failed (cmd18)");
 	memmove(a, buf, n);
 
@@ -739,6 +721,8 @@ sdioreset(void)
 
 	print("sdioreset\n");
 
+	card.valid = 0;
+
 	// xxx should probably set the clock lower.  and set to 25mhz or 50mhz after card identification.
 
 	/* configure host controller */
@@ -752,8 +736,8 @@ sdioreset(void)
 	reg->errintrena = 0;
 
 	/* enable all status reporting */
-	reg->norintrstatena = Mask16&~0;
-	reg->errintrstatena = Mask16&~0;
+	reg->norintrstatena = MASK(16)&~0;
+	reg->errintrstatena = MASK(16)&~0;
 }
 
 static void
@@ -824,27 +808,22 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 		free(buf);
 		break;
 	case Qcid:
-		if(lastcidok == 0)
-			error("no cid read yet");
+		if(card.valid == 0)
+			error("no card");
 		buf = malloc(READSTR);
 		if(buf == nil)
 			error(Enomem);
-		n = readstr(offset, a, n, cidstr(&lastcid, buf, READSTR));
+		n = readstr(offset, a, n, cidstr(&card.cid, buf, READSTR));
 		free(buf);
 		break;
 	case Qcsd:
-		if(lastcsdok == 0)
-			error("no csd read yet");
+		if(card.valid == 0)
+			error("no card");
 		buf = malloc(READSTR);
 		if(buf == nil)
 			error(Enomem);
-		n = readstr(offset, a, n, csdstr(&lastcsd, buf, READSTR));
+		n = readstr(offset, a, n, csdstr(&card.csd, buf, READSTR));
 		free(buf);
-		break;
-	case Qraw:
-		if(c->aux == nil)
-			error("no command executed");
-		n = readstr(offset, a, n, c->aux);
 		break;
 	case Qdata:
 		n = sdio(a, n, offset, 0);
@@ -860,9 +839,6 @@ static long
 sdiowrite(Chan* c, void* a, long n, vlong offset)
 {
 	char buf[128];
-	char *p, *e;
-	ulong isapp, cmd, arg;
-	uvlong resp[2];
 	SdioReg *reg = SDIOREG;
 
 	USED(offset);
@@ -881,42 +857,6 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 			print("bad ctl: %q\n", buf);
 			error(Ebadctl);
 		}
-		break;
-	case Qraw:
-		/* line with:  (a)cmdX, arg (in hex).  result is the response in hex. */
-		if(n >= sizeof buf)
-			error(Etoobig);
-		memmove(buf, a, n);
-		buf[n] = 0;
-		p = buf;
-		e = buf+n;
-		isapp = 0;
-		if(p < e && *p == 'a') {
-			isapp = 1;
-			p++;
-		}
-		if(e-p < 3 || strncmp(p, "cmd", 3) != 0) {
-			print("not cmd\n");
-			error(Ebadarg);
-		}
-		p += 3;
-		cmd = strtoul(p, &p, 10);
-		if(*p != ' ') {
-			print("no space after cmd num\n");
-			error(Ebadarg);
-		}
-		p++;
-		arg = strtoul(p, &p, 0);
-		if(strcmp(p, "") != 0 && strcmp(p, "\n") != 0) {
-			print("no arg after space, p %p e %p, p %q\n", p, e, p);
-			error(Ebadarg);
-		}
-		if(sdcmd0(isapp, cmd, 0, arg, resp) < 0)
-			error(Ecmdfailed);
-		free(c->aux);
-		c->aux = smprint("result: %016llux %016llux\n", resp[0], resp[1]);
-		if(c->aux == nil)
-			error(Enomem);
 		break;
 	case Qdata:
 		n = sdio(a, n, offset, 0);
