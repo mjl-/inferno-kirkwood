@@ -202,6 +202,12 @@ TEXT spsrr(SB), $-4
 	MOVW	SPSR, R0
 	RET
 
+TEXT gotopc(SB), $-4
+	MOVW	R0, R1
+	MOVW	$0, R0
+	MOVW	R1, PC
+	RET
+
 TEXT idle(SB), $-4
 	MCR	CpMMU, 0, R0, C(CpPower), C(0), 4
 	RET

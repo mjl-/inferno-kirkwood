@@ -17,6 +17,7 @@ dev
 	ether netif netaux
 	sdio
 	sheeva
+	boot
 
 ip
 	il

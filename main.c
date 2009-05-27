@@ -50,9 +50,8 @@ main(void)
 	clockinit();
 	printinit();
 	procinit();
-	links();
 	archconsole();
-iprint("chandevreset\n");
+	links();
 	chandevreset();
 
 	eve = strdup("inferno");
