@@ -1,0 +1,14 @@
+# sheevaplug & marvell
+http://www.openplug.org/
+http://www.openplug.org/index.php/resources/plugtop-documentation
+http://www.openplug.org/plugwiki/index.php?title=Main_Page
+http://openplug.org/plugforum/index.php?action=forum
+http://www.marvell.com/products/embedded_processors/developer/kirkwood/sheevaplug.jsp
+http://www.marvell.com/products/embedded_processors/kirkwood/index.jsp
+
+# u-boot
+http://www.denx.de/wiki/DULG/Manual
+
+# sdio
+http://www.sdcard.org/developers/tech/sdcard/pls/Simplified_Physical_Layer_Spec.pdf
+http://www.sdcard.org/developers/tech/host_controller/simple_spec/Simplified_SD_Host_Controller_Spec.pdf

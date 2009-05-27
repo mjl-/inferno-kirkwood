@@ -6,19 +6,9 @@
 #include	"../port/error.h"
 #include	"io.h"
 
-/*
- * first bits of sdio code.  the timing/error checking with commands is still wrong.
- * sdhc cards do not yet work.  normal sd cards might work.  mmc will not work either.
- * using this involves lots of debug prints.
- *
- * http://www.sdcard.org/developers/tech/host_controller/simple_spec/Simplified_SD_Host_Controller_Spec.pdf
- * http://www.sdcard.org/developers/tech/sdcard/pls/Simplified_Physical_Layer_Spec.pdf
- */
-
 #define dprint	if(1)print
 
-char Enotimpl[] = "not yet implemented";
-char Ecmdfailed[] = "sd command failed";
+char Enocard[] = "no card";
 
 enum {
 	SDOk		= 0,
@@ -200,14 +190,6 @@ Dirtab sdiotab[]={
 	"sdiodata",	{Qdata, 0},	0,	0666,
 };
 
-static void
-delay(void)
-{
-	volatile int i;
-	
-	for(i = 0; i < 128*1024; i++)
-		{}
-}
 
 static int
 min(int a, int b)
@@ -251,11 +233,12 @@ putle(uchar *p, uvlong v, int n)
 	}
 }
 
-/* xxx should make difference between app and non-app commands? */
-/* xxx make this less ugly */
 static ulong
-getresptype(ulong cmd)
+getresptype(int isapp, ulong cmd)
 {
+	if(isapp)
+		return CMDresp48;
+
 	switch(cmd) {
 	case 2:
 	case 9:
@@ -275,7 +258,27 @@ getresptype(ulong cmd)
 	return CMDresp48;
 }
 
-int
+static int lastcmd;
+static int lastisapp;
+static int lasterr;
+
+static char *errstrs[] = {
+"success",
+"timeout",
+"card busy",
+"error",
+};
+
+static void
+errorsd(char *s)
+{
+	if(lasterr == SDOk)
+		errorf("%s (%scmd %d)", s, lastisapp ? "a" : "", lastcmd);
+	else
+		errorf("%s, %s for %scmd %d", s, errstrs[-lasterr], lastisapp ? "a" : "", lastcmd);
+}
+
+static int
 sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 {
 	SdioReg *reg = SDIOREG;
@@ -287,11 +290,9 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	for(;;) {
 		if((reg->hwstate&(HScmdinhibit|HScardbusy)) == 0)
 			break;
-		if(i++ >= 50) {
-			print("card busy\n");
+		if(i++ >= 50)
 			return SDCardbusy;
-		}
-		tsleep(&up->sleep, return0, nil, 1);
+		tsleep(&up->sleep, return0, nil, 10);
 	}
 
 	/* "next command is sd application specific" */
@@ -321,7 +322,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 		cmdopts = CMDdatapresent;
 	}
 	reg->txmode = txmode;
-	resptype = getresptype(cmd);
+	resptype = getresptype(isapp, cmd);
 	reg->cmd = CMDresp(resptype)|cmdopts|CMDcmd(cmd);
 
 	/* poll for completion/error */
@@ -343,7 +344,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 			print("command unfinished\n");
 			return SDError;
 		}
-		delay();
+		tsleep(&up->sleep, return0, nil, 10);
 	}
 	if(0)print("success, status %04lux %04lux\n", reg->norintrstat, reg->errintrstat);
 
@@ -380,16 +381,22 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	return 0;
 }
 
-int
+static int
 sdcmd(Card *c, ulong cmd, ulong arg)
 {
-	return sdcmd0(c, 0, cmd, arg);
+	lastisapp = 0;
+	lastcmd = cmd;
+	lasterr = sdcmd0(c, 0, cmd, arg);
+	return lasterr;
 }
 
-int
+static int
 sdacmd(Card *c, ulong cmd, ulong arg)
 {
-	return sdcmd0(c, 1, cmd, arg);
+	lastisapp = 1;
+	lastcmd = cmd;
+	lasterr = sdcmd0(c, 1, cmd, arg);
+	return lasterr;
 }
 
 static int
@@ -546,6 +553,36 @@ csdstr(Csd *c, char *p, int n)
 	return p;
 }
 
+static char*
+cardtype(Card *c)
+{
+	if(c->mmc)
+		return "mmc";
+	if(c->sdhc)
+		return "sdhc";
+	return "sd";
+}
+
+static char*
+cardstr(Card *c, char *buf, int n)
+{
+	snprint(buf, n,
+		"card %s\n"
+		"type %s\n"
+		"size %,lld bytes\n"
+		"blocksize %lud\n"
+		"manufactured %d-%02d\n"
+		"rev %#ux\n"
+		"serial %#lux\n",
+		c->cid.prodname,
+		cardtype(c),
+		c->size,
+		c->bs,
+		c->cid.year, c->cid.mon,
+		c->cid.rev,
+		c->cid.serial);
+	return buf;
+}
 
 static void
 sdinit(void)
@@ -555,13 +592,11 @@ sdinit(void)
 
 	/* force card to idle state */
 	if(sdcmd(&card, 0, 0) < 0)
-		error("reset failed (cmd0)");
+		errorsd("reset failed");
 
 	/*
 	 * "send interface command".  only >=2.00 cards will respond.
 	 * we send a check pattern and supported voltage range.
-	 * if we get a timeout we know the card is not 2.00
-	 * or doesn't support the voltage.
 	 */
 	card.mmc = 0;
 	card.sd2 = 0;
@@ -572,12 +607,11 @@ sdinit(void)
 		card.sd2 = 1;
 		v = bits(card.resp+1, 31, 0);
 		if((v & CMD8patternmask) != CMD8pattern)
-			error("sd check pattern mismatch (cmd8)");
+			errorsd("sd check pattern mismatch");
 		if((v & CMD8voltagemask) != CMD8voltage)
-			error("sd voltage not supported (cmd8)");
+			errorsd("sd voltage not supported");
 	} else if(s != SDTimeout)
-		error("sd2 voltage exchange failed (cmd8)");
-	dprint("cmd8 done, sd2 %d\n", card.sd2);
+		errorsd("voltage exchange failed");
 
 	/*
 	 * "send host capacity support information".
@@ -591,37 +625,37 @@ sdinit(void)
 		s = sdacmd(&card, 41, v);
 		if(s == SDTimeout) {
 			if(card.sd2)
-				error("sd >=2.00 card not responding to acmd41");
+				errorsd("sd >=2.00 card");
 			card.mmc = 1;
 			break;
 		}
 		if(s < 0)
-			error("exchange voltage/sdhc support info failed (acmd41)");
+			errorsd("exchange voltage/sdhc support info");
 		v = bits(card.resp+1, 31, 0);
 		if((v & ACMD41voltagewindow) == 0)
-			error("voltage not supported (acmd41)");
+			errorsd("voltage not supported");
 		if(v & ACMD41ready) {
 			card.sdhc = (v & ACMD41sdhcsupported) != 0;
 			break;
 		}
 
 		if(i >= 20)
-			error("sd card failed to power up (acmd41)");
-		tsleep(&up->sleep, return0, nil, 5);
+			errorsd("sd card failed to power up");
+		tsleep(&up->sleep, return0, nil, 10);
 	}
-	print("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", card.mmc, card.sd2, card.sdhc);
+	dprint("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", card.mmc, card.sd2, card.sdhc);
 	if(card.mmc)
 		error("mmc cards not yet supported"); // xxx p14 says this involves sending cmd1
 
 	if(sdcmd(&card, 2, 0) < 0)
-		error("send card identification failed (cmd2)");
+		errorsd("card identification");
 	if(parsecid(&card.cid, card.resp) < 0)
-		error("bad cid register");
+		errorsd("bad cid register");
 
 	i = 0;
 	for(;;) {
 		if(sdcmd(&card, 3, 0) < 0)
-			error("send relative address failed (cmd3)");
+			errorsd("getting relative address");
 		card.rca = bits(card.resp+1, 31, 16);
 		v = bits(card.resp+1, 15, 0);
 		dprint("have card rca %ux, status %lux\n", card.rca, v);
@@ -629,20 +663,20 @@ sdinit(void)
 		if(card.rca != 0)
 			break;
 		if(i++ == 10)
-			error("card insists on invalid rca 0");
+			errorsd("card insists on invalid rca 0");
 	}
 
 	if(sdcmd(&card, 9, card.rca<<16) < 0)
-		error("send csd failed (cmd9)");
+		errorsd("get csd");
 	if(parsecsd(&card.csd, card.resp) < 0)
-		error("bad csd register");
+		errorsd("bad csd register");
 
 	if(card.csd.version == 0) {
 		card.bs = 1<<card.csd.readblocklength;
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
 		card.size *= 1<<card.csd.readblocklength;
-		print("csd0, block length read/write %d/%d, size %,lld bytes, eraseblock %d\n",
+		kprint("csd0, block length read/write %d/%d, size %,lld bytes, eraseblock %d\n",
 			1<<card.csd.readblocklength, 
 			1<<card.csd.writeblocklength,
 			card.size,
@@ -650,25 +684,22 @@ sdinit(void)
 	} else {
 		card.bs = 512;
 		card.size = (vlong)(card.csd.size+1)*card.bs*1024;
-		print("csd1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n", card.size);
+		kprint("csd1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
 
 	if(sdcmd(&card, 7, card.rca<<16) < 0)
-		error("card select failed (cmd7)");
+		errorsd("selecting card");
 
-	dprint("card selected\n");
-
+	/* xxx have to check if this is supported by card */
 	if(sdacmd(&card, 6, (1<<1)) < 0)
-		error("set buswidth to 4-bit failed (acmd6)");
+		errorsd("setting buswidth to 4-bit");
 
-	dprint("talking in 4-bit width\n");
+	if(sdcmd(&card, 16, card.bs) < 0)
+		errorsd("setting block length");
 
-	/* this is mandatory.  sd spec says this cannot be done if reads can't be partial, but that's probably wrong. */
-	if(sdcmd(&card, 16, 512) < 0)
-		error("set block length failed (cmd16)");
-	print("block length set\n");
 	card.valid = 1;
+	kprint("%s", cardstr(&card, up->genbuf, sizeof (up->genbuf)));
 }
 
 
@@ -679,15 +710,18 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	uchar *buf;
 
 	if(iswrite)
-		error(Enotimpl);
+		error("not yet implemented");
+
+	if(!card.valid)
+		error(Enocard);
 
 	/* xxx we should cover this cases with a buffer, and then use the same code to allow non-sector-aligned reads? */
 	if((ulong)a % 4 != 0)
 		error("bad buffer alignment...");
 
-	if(offset % 512 != 0)
+	if(offset % card.bs != 0)
 		error("not sector aligned");
-	if(n % 512 != 0)
+	if(n % card.bs != 0)
 		error("not multiple of sector size");
 
 	/* xxx for some reason i couldn't discover, using "a" directly causes corruption and makes the alloc routines panic in freetype/freeptrs...  i've check with a larger buffer, there doesn't seemt to be corruption before/after the buffer... */
@@ -702,10 +736,10 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 
 	reg->dmaaddrlo = (ulong)buf&MASK(16);
 	reg->dmaaddrhi = ((ulong)buf>>16)&MASK(16);
-	reg->blksize = 512;
-	reg->blkcount = n/512;
+	reg->blksize = card.bs;
+	reg->blkcount = n/card.bs;
 	if(sdcmd(&card, 18, (ulong)offset) < 0)
-		error("read failed (cmd18)");
+		errorsd("reading");
 	memmove(a, buf, n);
 
 	free(buf);
@@ -718,8 +752,6 @@ static void
 sdioreset(void)
 {
 	SdioReg *reg = SDIOREG;
-
-	print("sdioreset\n");
 
 	card.valid = 0;
 
@@ -781,35 +813,18 @@ sdioclose(Chan* c)
 static long
 sdioread(Chan* c, void* a, long n, vlong offset)
 {
-	SdioReg *reg = SDIOREG;
 	char *buf;
 
 	switch((ulong)c->qid.path){
 	case Qdir:
 		return devdirread(c, a, n, sdiotab, nelem(sdiotab), devgen);
 	case Qctl:
-		buf = malloc(READSTR);
-		if(buf == nil)
-			error(Enomem);
-		snprint(buf, READSTR,
-			"resp0-3 %04lux %04lux %04lux %04lux\n"
-			"resp5-7 %04lux %04lux %04lux %04lux\n"
-			"hwstate %04lux\n"
-			"hostctl %04lux\n"
-			"normal  %04lux\n"
-			"error   %04lux\n",
-			reg->resp[0], reg->resp[1], reg->resp[2], reg->resp[3],
-			reg->resp[4], reg->resp[5], reg->resp[6], reg->resp[7],
-			reg->hwstate,
-			reg->hostctl,
-			reg->norintrstat,
-			reg->errintrstat);
-		n = readstr(offset, a, n, buf);
-		free(buf);
+		cardstr(&card, up->genbuf, sizeof (up->genbuf));
+		n = readstr(offset, a, n, up->genbuf);
 		break;
 	case Qcid:
 		if(card.valid == 0)
-			error("no card");
+			error(Enocard);
 		buf = malloc(READSTR);
 		if(buf == nil)
 			error(Enomem);
@@ -818,7 +833,7 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 		break;
 	case Qcsd:
 		if(card.valid == 0)
-			error("no card");
+			error(Enocard);
 		buf = malloc(READSTR);
 		if(buf == nil)
 			error(Enomem);

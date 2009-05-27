@@ -5,13 +5,13 @@ boots, uses uart as console, rtc, runs dis programs, basic network support (dhcp
 next steps:
 - find problems/crashes
 - more ethernet (link changes, more proper init, more efficient packet handling)
-- more sdio (make much more stable, detect card changes, use user buffer without crashing, support sdhc, and much more)
+- more sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
 - flush data cache around dma
 - l2 caches
 - nand
 - improve uart (mode setting)
 - crypto support
-- later: xor,usb,gpio,efuse,twsi,spi,sata,audio(i2s),pciexpress
+- later: gpio,xor,usb,efuse,twsi,spi,sata,audio(i2s),pciexpress
 
 
 # intro
