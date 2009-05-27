@@ -85,7 +85,16 @@ Index: mdb.b
  	}
  	if(s == nil && (s = lastcmd) == nil) 
  		return;
-@@ -191,12 +191,12 @@
+@@ -157,6 +157,8 @@
+ 	case cmd {
+ 	'?' or '/' =>
+ 		case s[1] {
++		'v' =>
++			writemem(1, s[2:]);
+ 		'w' =>
+ 			writemem(2, s[2:]);
+ 		'W' =>
+@@ -191,12 +193,12 @@
  	}
  }
  
@@ -101,7 +110,7 @@ Index: mdb.b
  	} while(d-- > 1);
  	return "0" + s;
  }
-@@ -248,55 +248,56 @@
+@@ -248,55 +250,56 @@
  			dot--;
  			continue;
  		'^' =>
@@ -176,7 +185,7 @@ Index: mdb.b
  		if (sys->write(mfd, b, len b) != len b)
  			sys->fprint(stderr, "mdb: write error: %r\n");
  	}
-@@ -481,7 +482,7 @@
+@@ -481,7 +484,7 @@
  	if(m == nil || m.magic == 0)
  		return;
  
