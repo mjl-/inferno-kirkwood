@@ -17,6 +17,7 @@ static Dirtab rtcdir[] = {
 	"rtc",		{Qrtc},	NUMSIZE,	0664,
 };
 
+/* code based on os/js/devrtc.c */
 typedef struct Rtc	Rtc;
 struct Rtc
 {
