@@ -15,6 +15,8 @@
  * http://www.sdcard.org/developers/tech/sdcard/pls/Simplified_Physical_Layer_Spec.pdf
  */
 
+#define dprint	if(0)print
+
 typedef struct Cid Cid;
 typedef struct Csd Csd;
 
@@ -169,7 +171,7 @@ enum {
 
 	ACMD41voltagewindow	= MASK(23-15+1)<<15,
 	ACMD41sdhcsupported	= 1<<30,
-	ACMD41powerup		= 1<<31,
+	ACMD41ready		= 1<<31,
 };
 
 enum {
@@ -193,6 +195,7 @@ Dirtab sdiotab[]={
 
 
 /* xxx should make difference between app and non-app commands? */
+/* xxx make this less ugly */
 static ulong
 getresptype(ulong cmd)
 {
@@ -232,8 +235,6 @@ sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
 	ulong resptype, cmdopts, txmode, v, need;
 	uvlong lo, hi;
 
-	print("sdcmd, isapp %lux, cmd %lud, arg %#lux\n", isapp, cmd, arg);
-
 	i = 0;
 	for(;;) {
 		if((reg->hwstate&(HScmdinhibit|HScardbusy)) == 0)
@@ -248,6 +249,8 @@ sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
 	/* "next command is sd application specific" */
 	if(isapp && (s = sdcmd0(0, 55, 0, rca<<16, r)) < 0)
 		return s;
+
+	dprint("sdcmd, isapp %lux, cmd %lud, arg %#lux\n", isapp, cmd, arg);
 
 	/* clear status */
 	reg->norintrstat = Mask16&~0;
@@ -272,7 +275,7 @@ sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
 	reg->txmode = txmode;
 	resptype = getresptype(cmd);
 	reg->cmd = CMDresp(resptype)|cmdopts|CMDcmd(cmd);
-	print("sent: %04lux %04lux %04lux %04lux\n", reg->argcmdlo, reg->argcmdhi, reg->txmode, reg->cmd);
+	dprint("sent: %04lux %04lux %04lux %04lux\n", reg->argcmdlo, reg->argcmdhi, reg->txmode, reg->cmd);
 
 	/* poll for completion/error */
 	i = 0;
@@ -295,9 +298,9 @@ sdcmd0(ulong isapp, ulong cmd, ulong rca, ulong arg, uvlong r[])
 		}
 		delay();
 	}
-	print("success, status %04lux %04lux\n", reg->norintrstat, reg->errintrstat);
+	dprint("success, status %04lux %04lux\n", reg->norintrstat, reg->errintrstat);
 
-	print("r %08lux %08lux %08lux %08lux %08lux %08lux %08lux %08lux\n",
+	dprint("r %08lux %08lux %08lux %08lux %08lux %08lux %08lux %08lux\n",
 		reg->resp[0],
 		reg->resp[1],
 		reg->resp[2],
@@ -434,7 +437,7 @@ getcsd(uvlong or[], Csd *c)
 	r[0] = (or[0]<<8)|(or[1]>>56);
 	r[1] = or[1]<<8;
 
-	print("getcsd, %016llux %016llux\n", r[0], r[1]);
+	dprint("getcsd, %016llux %016llux\n", r[0], r[1]);
 
 	/* we only know of version 0 and 1 */
 	c->version = bits(127, 126, r);
@@ -473,7 +476,7 @@ getcsd(uvlong or[], Csd *c)
 	c->tmpwriteprotect	= bits(12, 12, r);
 	c->fileformat		= bits(11, 10, r);
 
-	print("fileformat %x, bits %lux, shifted %llux, mask %llux, v %llux\n", c->fileformat, bits(11, 10, r), r[1]>>10, MASK(11-10+1), (r[1]>>10)&MASK(11-10+1));
+	dprint("fileformat %x, bits %lux, shifted %llux, mask %llux, v %llux\n", c->fileformat, bits(11, 10, r), r[1]>>10, MASK(11-10+1), (r[1]>>10)&MASK(11-10+1));
 
 	return 0;
 }
@@ -561,14 +564,12 @@ sdinit(void)
 	int sd2, mmc, sdhc;
 	Cid cid;
 	Csd csd;
-	ulong rca, status;
+	ulong v, ocr, rca, status;
 	char *buf;
 
 	/* force card to idle state */
 	if(sdcmd(0, 0, r) < 0)
 		error("reset failed (cmd0)");
-
-	print("cmd0 done\n");
 
 	/*
 	 * "send interface command".  only >=2.00 cards will respond to this.
@@ -587,8 +588,7 @@ sdinit(void)
 		sd2 = 0;
 	else
 		error("sd2 voltage exchange failed (cmd8)");
-
-	print("cmd8 done, sd2 %d\n", sd2);
+	dprint("cmd8 done, sd2 %d\n", sd2);
 
 	/*
 	 * "send host capacity support information".
@@ -598,35 +598,35 @@ sdinit(void)
 	mmc = 0;
 	sdhc = 0;
 	for(i = 0;; i++) {
-		s = sdacmd(41, 0, ACMD41sdhcsupported|ACMD41voltagewindow, r);
+		v = ACMD41sdhcsupported|ACMD41voltagewindow;
+		s = sdacmd(41, 0, v, r);
 		if(s == SDTimeout) {
 			if(sd2)
 				error("sd >=2.00 card not responding to acmd41");
 			mmc = 1;
 			break;
-		} else if(s < 0)
+		}
+		if(s < 0)
 			error("exchange voltage/sdhc support info failed (acmd41)");
-		if((r[1]&ACMD41voltagewindow) == 0)
+		ocr = r[1];
+		dprint("amd41 response, ocr %#08lux\n", ocr);
+		if((ocr & ACMD41voltagewindow) == 0)
 			error("voltage not supported (acmd41)");
-		if(r[1]&ACMD41powerup) {
-			/* xxx on my card the first response to acmd41 does not have the sdhc bit set, the second response does.  if i don't do at least two acmd41's, later commands fail.  the card isn't sdhc afaik... */
-			/* xxx perhaps there is a part of the spec that explains that we have to wait for the card to settle down? */
-			if(i == 0)
-				continue;
-			sdhc = (r[1]&ACMD41sdhcsupported) != 0;
+		/* sdhc support must only be checked for the first response */
+		if(ocr & ACMD41ready) {
+			sdhc = (ocr & ACMD41sdhcsupported) != 0;
 			break;
 		}
 
 		if(i >= 50)
 			error("sd card failed to power up (acmd41)");
+		tsleep(&up->sleep, return0, nil, 10);
 	}
+	print("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", mmc, sd2, sdhc);
 	if(mmc)
 		error("mmc cards not yet supported"); // xxx p14 says this involves sending cmd1
-	print("card, sd2 %d, sdhc %d\n", sd2, sdhc);
-	delay();
 
-	print("acmd41 done\n");
-
+	tsleep(&up->sleep, return0, nil, 10);
 	if(sdcmd(2, 0, r) < 0)
 		error("send card identification failed (cmd2)");
 	getcid(r, &cid);
@@ -636,14 +636,14 @@ sdinit(void)
 	buf = malloc(READSTR);
 	if(buf == nil)
 		error(Enomem);
-	print("cmd2 done, cid %s\n", cidstr(&cid, buf, READSTR));
+	dprint("cmd2 done, cid %s\n", cidstr(&cid, buf, READSTR));
 	free(buf);
 
 	if(sdcmd(3, 0, r) < 0)
 		error("send relative address failed (cmd3)");
 	rca = r[1]>>16;
 	status = r[0]&MASK(16);
-	print("have card rca %lux, status %lux\n", rca, status);
+	dprint("have card rca %lux, status %lux\n", rca, status);
 
 	if(sdcmd(9, rca<<16, r) < 0)
 		error("send csd failed (cmd9)");
@@ -654,33 +654,33 @@ sdinit(void)
 	buf = malloc(READSTR);
 	if(buf == nil)
 		error(Enomem);
-	print("cmd9 done\n");
-	print("%s", csdstr(&csd, buf, READSTR));
+	dprint("cmd9 done\n");
+	dprint("%s", csdstr(&csd, buf, READSTR));
 	free(buf);
 
 	if(csd.version == 0) {
 		sectorsize = 1<<csd.readblocklength;
-		print("csd v0, block length read/write %d/%d, size %,d bytes, eraseblock %d",
+		print("csd v0, block length read/write %d/%d, size %,lld bytes, eraseblock %d\n",
 			1<<csd.readblocklength, 
 			1<<csd.writeblocklength,
-			(csd.devsize+1)*(1<<(csd.v0.devsizemult+2))*(1<<csd.readblocklength),
+			((vlong)csd.devsize+1)*((vlong)1<<(csd.v0.devsizemult+2))*((vlong)1<<csd.readblocklength),
 			(1<<csd.writeblocklength)*(csd.erasesectorsize+1));
 	} else {
 		sectorsize = 512;
-		print("csd v1, fixed 512 block length, size %,d bytes, eraseblock fixed 512",
-			(csd.devsize+1)*512*1024);
+		print("csd v1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n",
+			((vlong)csd.devsize+1)*512*1024);
 	}
 
 
 	if(sdcmd(7, rca<<16, r) < 0)
 		error("card select failed (cmd7)");
 
-	print("card selected\n");
+	dprint("card selected\n");
 
 	if(sdacmd(6, rca, (1<<1), r) < 0)
 		error("set buswidth to 4-bit failed (acmd6)");
 
-	print("talking in 4-bit width\n");
+	dprint("talking in 4-bit width\n");
 
 	/* this is mandatory.  sd spec says this cannot be done if reads can't be partial, but that's probably wrong. */
 	if(sdcmd(16, 512, r) < 0)
@@ -738,6 +738,8 @@ sdioreset(void)
 	SdioReg *reg = SDIOREG;
 
 	print("sdioreset\n");
+
+	// xxx should probably set the clock lower.  and set to 25mhz or 50mhz after card identification.
 
 	/* configure host controller */
 	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15); // xxx HCtimeoutenable;
@@ -873,7 +875,6 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 		buf[n] = 0;
 		if(strcmp(buf, "reset") == 0 || strcmp(buf, "reset\n") == 0) {
 			reg->swreset = SRresetall;
-			delay();
 		} else if(strcmp(buf, "init") == 0 || strcmp(buf, "init\n") == 0) {
 			sdinit();
 		} else {
