@@ -1,17 +1,26 @@
 enum {
 	Intrbase =	0xf1000000,
-	AddrCpucsr =	Intrbase+0x20100,
-	AddrIntr =	Intrbase+0x20200,
-	AddrTimer =	Intrbase+0x20300,
-	AddrUart0 =	Intrbase+0x12000,
-	AddrUart1 =	Intrbase+0x12100,
+	AddrMpp =	Intrbase+0x10000,
+	AddrGpio0 =	Intrbase+0x10100,
+	AddrGpio1 =	Intrbase+0x10140,
 	AddrRtc =	Intrbase+0x10300,
 
 	AddrDeviceid =	Intrbase+0x10034,
 	AddrClockctl =	Intrbase+0x1004c,
 	AddrIocfg0 =	Intrbase+0x100e0,
-
 	AddrDevid =	Intrbase+0x10034,
+
+	AddrUart0 =	Intrbase+0x12000,
+	AddrUart1 =	Intrbase+0x12100,
+
+	AddrWin =	Intrbase+0x20000,
+	AddrCpucsr =	Intrbase+0x20100,
+	AddrIntr =	Intrbase+0x20200,
+	AddrTimer =	Intrbase+0x20300,
+
+	AddrTdmaAddr =	Intrbase+0x30a00,
+	AddrTdmaCtl =	Intrbase+0x30800,
+	AddrTdamIntr =	Intrbase+0x308c8,
 
 	AddrHash =	Intrbase+0x3dd00,
 	AddrDes =	Intrbase+0x3dd40,
@@ -19,10 +28,6 @@ enum {
 	AddrAesdec =	Intrbase+0x3ddc0,
 	AddrCryptoIntr =Intrbase+0x3de20,
 	AddrSecurity =	Intrbase+0x3de00,
-
-	AddrTdmaAddr =	Intrbase+0x30a00,
-	AddrTdmaCtl =	Intrbase+0x30800,
-	AddrTdamIntr =	Intrbase+0x308c8,
 
 	AddrGbe0 =	Intrbase+0x72000,
 	AddrGbe1 =	Intrbase+0x76000,
@@ -407,10 +412,48 @@ struct SdioReg
 	ulong	mbusctllo;
 	ulong	mbusctlhi;
 	struct {
-	       ulong	ctl;
-	       ulong	data;
+		ulong	ctl;
+		ulong	data;
 	} win[4];
 	ulong	clkdiv;
 	ulong	addrdecerr;
 	ulong	addrdecerrmsk;
+};
+
+#define MPPREG ((Reg*)AddrMpp)
+typedef struct MppReg MppReg;
+struct MppReg
+{
+	ulong	ctl[7];
+	ulong	pad0[PAD(0x30, 0x18)];
+	ulong	sampatrst;
+};
+
+#define GPIO0REG	((GpioReg*)AddrGpio0)
+#define GPIO1REG	((GpioReg*)AddrGpio1)
+typedef struct GpioReg GpioReg;
+struct GpioReg
+{
+	ulong	dataout;
+	ulong	dataoutena;
+	ulong	blinkena;
+	ulong	datainpol;
+	ulong	datain;
+	ulong	intrcause;
+	ulong	intrmask;
+	ulong	intrlevelmask;
+};
+
+#define	WINREG	((WinReg*)AddrWin)
+typedef struct WinReg WinReg;
+struct WinReg
+{
+	struct {
+		ulong	ctl;
+		ulong	base;
+		ulong	remaplo;
+		ulong	remaphi;
+	} w[7];
+	ulong	pad0[PAD(0x80, 0x74)];
+	ulong	intbase;
 };

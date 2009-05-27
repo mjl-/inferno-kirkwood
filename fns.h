@@ -22,7 +22,7 @@ int	fpiarm(Ureg*);
 void	fpinit(void);
 ulong	getcallerpc(void*);
 ulong	getcpuid(void);
-void	gotopc(void);
+void	gotopc(ulong);
 void	idlehands(void);
 void	idle(void);
 void	intrclear(int, int);

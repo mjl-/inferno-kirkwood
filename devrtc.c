@@ -17,114 +17,23 @@ static Dirtab rtcdir[] = {
 	"rtc",		{Qrtc},	NUMSIZE,	0664,
 };
 
-extern ulong boottime;
-
-static void
-rtcreset(void)
+typedef struct Rtc	Rtc;
+struct Rtc
 {
-}
+	int	sec;
+	int	min;
+	int	hour;
+	int	wday;
+	int	mday;
+	int	mon;
+	int	year;
+};
 
-static ulong
-getbcd(ulong bcd)
-{
-	return (bcd&0x0f) + 10 * (bcd>>4);
-}
-
-static ulong
-putbcd(ulong val)
-{
-	return (val % 10) | (((val/10) % 10) << 4);
-}
-
-static int
-isleap(int y)
-{
-	return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-}
-
-static int
-yeardays(int year)
-{
-	return isleap(year) ? 366 : 365;
-}
-
-int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-static int
-monthdays(int year, int mon)
-{
-	return days[mon] + ((mon == 1 && isleap(year)) ? 1 : 0);
-}
-
-
-#define MASK(x)	((1<<(x))-1)
-static ulong
-rtctimeget(void)
-{
-	int i, nd;
-	ulong s, m, h, day, mon, year, v;
-	ulong t = RTCREG->time;
-	ulong d = RTCREG->date;
-
-	s = getbcd((t>>0)&MASK(7));
-	m = getbcd((t>>8)&MASK(7));
-		
-	if(t&(1<<22)) {
-		/* am/pm mode is used */
-		h = getbcd((t>>16)&MASK(5));
-		if(t&(1<<21))
-			h += 12;	/* pm (not am) */
-	} else {
-		h = getbcd((t>>16)&MASK(6));
-	}
-
-	day = getbcd((d>>0)&MASK(6));	/* 1 to 31 */
-	mon = getbcd((d>>8)&MASK(5));	/* 1 to 12 */
-	year = getbcd((d>>16)&MASK(8));	/* 00 to 99, 20xx */
-
-	year += 2000;
-	day -= 1;
-	mon -= 1;
-
-	v = 0;
-	for(i = 1970; i < year; i++)
-		day += yeardays(i);
-	for(i = 0; i < mon; i++)
-		day += monthdays(year, mon);
-	v += day*24*3600;
-	v += h*3600+m*60+s;
-
-	return v;
-}
-
-static void
-rtctimeset(ulong v)
-{
-	ulong n, year, mon, day, h, m, s;
-
-	/* we start at unix epoch, and keep adding years,months,days,hours,minutes,seconds until we match parameter v */
-	n = 0;
-
-	for(year = 1970; n+(yeardays(year)*24*3600) <= v; year++)
-		n += yeardays(year)*24*3600;
-	for(mon = 0; n+(monthdays(year, mon)*24*3600) <= v; mon++)
-		n += monthdays(year, mon)*24*3600;
-	for(day = 0; n+24*3600 <= v; day++)
-		n += 24*3600;
-
-	for(h = 0; n+3600 <= v; h++)
-		n += 3600;
-	for(m = 0; n+60 <= v; m++)
-		n += 60;
-	s = v-n;
-
-	mon += 1;
-	day += 1;
-	year %= 2000;
-
-	RTCREG->time = (putbcd(h/10)<<20) | (putbcd(h%10)<<16) | (putbcd(m)<<8) | (putbcd(s)<<0);
-	RTCREG->date = (putbcd(year)<<16) | (putbcd(mon)<<8) | (putbcd(day)<<0);
-}
-
+static void	setrtc(Rtc *rtc);
+static ulong	rtctime(void);
+static int	*yrsize(int yr);
+static ulong	rtc2sec(Rtc *rtc);
+static void	sec2rtc(ulong secs, Rtc *rtc);
 
 static Chan*
 rtcattach(char *spec)
@@ -163,7 +72,7 @@ rtcread(Chan *c, void *buf, long n, vlong off)
 
 	switch((ulong)c->qid.path){
 	case Qrtc:
-		return readnum(off, buf, n, rtctimeget(), NUMSIZE);
+		return readnum(off, buf, n, rtctime(), NUMSIZE);
 	}
 	error(Egreg);
 	return 0;		/* not reached */
@@ -175,6 +84,7 @@ rtcwrite(Chan *c, void *buf, long n, vlong off)
 	ulong offset = off;
 	ulong secs;
 	char *cp, sbuf[32];
+	Rtc rtc;
 
 	switch((ulong)c->qid.path){
 	case Qrtc:
@@ -189,7 +99,8 @@ rtcwrite(Chan *c, void *buf, long n, vlong off)
 			cp++;
 		}
 		secs = strtoul(cp, 0, 0);
-		rtctimeset(secs);
+		sec2rtc(secs, &rtc);
+		setrtc(&rtc);
 		return n;
 
 	}
@@ -197,18 +108,180 @@ rtcwrite(Chan *c, void *buf, long n, vlong off)
 	return 0;		/* not reached */
 }
 
-static void
-rtcpower(int on)
+#define bcd2dec(bcd)	(((((bcd)>>4) & 0x0F) * 10) + ((bcd) & 0x0F))
+#define dec2bcd(dec)	((((dec)/10)<<4)|((dec)%10))
+
+enum
 {
-	if(on)
-		boottime = rtctimeget() - TK2SEC(MACHP(0)->ticks);
+	RTCHourPM = 1<<21,	/* pm (not am) */
+	RTCHour12 = 1<<22,	/* 12 hour (not 24) */
+};
+
+static ulong
+rtctime(void)
+{
+	ulong t, d;
+	Rtc rtc;
+
+	t = RTCREG->time;
+	d = RTCREG->date;
+
+	rtc.sec = bcd2dec((t>>0) & (BITS(0, 6) - 1));
+	rtc.min = bcd2dec((t>>8) & (BITS(8, 14) - 1));
+		
+	if(t&RTCHour12) {
+		rtc.hour = bcd2dec((t>>16) & (BITS(16, 20) - 1)); /* 1 to 12 */
+		if(t & RTCHourPM)
+			rtc.hour += 12;
+	} else {
+		rtc.hour = bcd2dec((t>>16) & (BITS(16, 21) - 1)); /* 0 to 23 */
+	}
+
+	rtc.mday = bcd2dec((d>>0) & (BITS(0, 5) - 1));		/* 1 to 31 */
+	rtc.mon = bcd2dec((d>>8) & (BITS(8, 12) - 1));		/* 1 to 12 */
+	rtc.year = bcd2dec((d>>16) & (BITS(16, 23) - 1));	/* 00 to 99, 20xx */
+
+	rtc.year += 2000;
+	
+//	print("%0.2d:%0.2d:%.02d %0.2d/%0.2d/%0.2d\n", /* HH:MM:SS YY/MM/DD */
+//		rtc.hour, rtc.min, rtc.sec, rtc.year, rtc.mon, rtc.mday);
+
+	return rtc2sec(&rtc);
+}
+
+static void
+setrtc(Rtc *rtc)
+{
+	RTCREG->time =	(dec2bcd(rtc->hour/10)<<20) |
+			(dec2bcd(rtc->hour%10)<<16) |
+			(dec2bcd(rtc->min)<<8) |
+			(dec2bcd(rtc->sec)<<0);
+
+	RTCREG->date =	(dec2bcd(rtc->year - 2000)<<16) |
+			(dec2bcd(rtc->mon)<<8) |
+			(dec2bcd(rtc->mday)<<0);
+}
+
+#define SEC2MIN 60L
+#define SEC2HOUR (60L*SEC2MIN)
+#define SEC2DAY (24L*SEC2HOUR)
+
+/*
+ *  days per month plus days/year
+ */
+static	int	dmsize[] =
+{
+	365, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+};
+static	int	ldmsize[] =
+{
+	366, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+};
+
+/*
+ *  return the days/month for the given year
+ */
+static int *
+yrsize(int yr)
+{
+	if((yr % 4) == 0)
+		return ldmsize;
+	else
+		return dmsize;
+}
+
+/*
+ *  compute seconds since Jan 1 1970
+ */
+static ulong
+rtc2sec(Rtc *rtc)
+{
+	ulong secs;
+	int i;
+	int *d2m;
+
+	secs = 0;
+
+	/*
+	 *  seconds per year
+	 */
+	for(i = 1970; i < rtc->year; i++){
+		d2m = yrsize(i);
+		secs += d2m[0] * SEC2DAY;
+	}
+
+	/*
+	 *  seconds per month
+	 */
+	d2m = yrsize(rtc->year);
+	for(i = 1; i < rtc->mon; i++)
+		secs += d2m[i] * SEC2DAY;
+
+	secs += (rtc->mday-1) * SEC2DAY;
+	secs += rtc->hour * SEC2HOUR;
+	secs += rtc->min * SEC2MIN;
+	secs += rtc->sec;
+
+	return secs;
+}
+
+/*
+ *  compute rtc from seconds since Jan 1 1970
+ */
+static void
+sec2rtc(ulong secs, Rtc *rtc)
+{
+	int d;
+	long hms, day;
+	int *d2m;
+
+	/*
+	 * break initial number into days
+	 */
+	hms = secs % SEC2DAY;
+	day = secs / SEC2DAY;
+	if(hms < 0) {
+		hms += SEC2DAY;
+		day -= 1;
+	}
+
+	/*
+	 * generate hours:minutes:seconds
+	 */
+	rtc->sec = hms % 60;
+	d = hms / 60;
+	rtc->min = d % 60;
+	d /= 60;
+	rtc->hour = d;
+
+	/*
+	 * year number
+	 */
+	if(day >= 0)
+		for(d = 1970; day >= *yrsize(d); d++)
+			day -= *yrsize(d);
+	else
+		for (d = 1970; day < 0; d--)
+			day += *yrsize(d-1);
+	rtc->year = d;
+
+	/*
+	 * generate month
+	 */
+	d2m = yrsize(rtc->year);
+	for(d = 1; day >= d2m[d]; d++)
+		day -= d2m[d];
+	rtc->mday = day + 1;
+	rtc->mon = d;
+
+	return;
 }
 
 Dev rtcdevtab = {
 	'r',
 	"rtc",
 
-	rtcreset,
+	devreset,
 	devinit,
 	devshutdown,
 	rtcattach,
@@ -223,5 +296,5 @@ Dev rtcdevtab = {
 	devbwrite,
 	devremove,
 	devwstat,
-	rtcpower,
+	devpower,
 };

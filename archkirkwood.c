@@ -81,9 +81,31 @@ wdogclock(void)
 	TIMERREG->timerwd = CLOCKFREQ/watchdoghz;
 }
 
+/* LED/USB gpios */
+enum
+{
+	SheevaOEValLow	= 1<<29,        /* USB_PWEN low */
+	SheevaOEValHigh	= 1<<17,        /* LED pin high */
+	SheevaOELow	= ~0,
+	SheevaOEHigh	= ~0,
+};
+
+static void
+gpioconf(ulong gpp0_oe_val, ulong gpp1_oe_val, ulong gpp0_oe, ulong gpp1_oe)
+{
+	GPIO0REG->dataout = gpp0_oe_val;
+	GPIO0REG->dataoutena = gpp0_oe;
+
+	GPIO1REG->dataout= gpp1_oe_val;
+	GPIO1REG->dataoutena= gpp1_oe;
+}
+
+
 void
 archreset(void)
 {
+	gpioconf(SheevaOEValLow, SheevaOEValHigh, SheevaOELow, SheevaOEHigh);
+
 	/* reset devices to initial state */
 	if(watchdoghz){
 		addclock0link(wdogclock, watchdoghz);
