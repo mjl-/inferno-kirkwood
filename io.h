@@ -31,6 +31,13 @@ enum {
 	AddrCryptoIntr =Regbase+0x3de20,
 	AddrSecurity =	Regbase+0x3de00,
 
+	AddrXorp0 =	Regbase+0x60800,
+	AddrXorp1 =	AddrXorp0+0x100,
+	AddrXore0p0 =	Regbase+0x60810,
+	AddrXore1p0 =	AddrXore0p0+4,
+	AddrXore0p1 =	AddrXore0p0+0x100,
+	AddrXore1p1 =	AddrXore0p1+4,
+
 	AddrGbe0 =	Regbase+0x72000,
 	AddrGbe1 =	Regbase+0x76000,
 
@@ -469,4 +476,53 @@ struct EfuseReg
 	ulong	lo0, hi0;
 	ulong	lo1, hi1;
 	ulong	ctl;
+};
+
+#define XORP0REG	((XorpReg*)AddrXorp0)
+#define XORP1REG	((XorpReg*)AddrXorp1)
+typedef struct XorpReg XorpReg;
+struct XorpReg
+{
+	ulong	xechar;		/* 0x60800 */
+	ulong	pad0[PAD(0x60830, 0x60800)];
+	ulong	intrcause;	/* 0x60830 */
+	ulong	pad1[3];
+	ulong	intrmask;	/* 0x60840 */
+	ulong	pad2[3];
+	ulong	errorcause;	/* 0x60850 */
+	ulong	pad3[3];
+	ulong	erroraddr;	/* 0x60860 */
+	ulong	pad4[PAD(0x60a50, 0x60860)];
+	ulong	bar[8];		/* 0x60a50 */
+	ulong	sizemask[8];	/* 0x60a70 */
+	ulong	harr[4];	/* 0x60a90 */
+	ulong	pad7[PAD(0x60ae0, 0x60a90+3*4)];
+	ulong	initvallo;	/* 0x60ae0 */
+	ulong	initvalhi;	/* 0x60ae4 */
+};
+
+#define XORE0P0REG	((XorReg*)AddrXore0p0)
+#define XORE1P0REG	((XorReg*)AddrXore1p0)
+#define XORE0P1REG	((XorReg*)AddrXore0p1)
+#define XORE1P1REG	((XorReg*)AddrXore1p1)
+typedef struct XorReg XorReg;
+struct XorReg
+{
+	ulong	cfg;		/* 0x60810 */
+	ulong	pad0[3];
+	ulong	act;		/* 0x60820 */
+	ulong	pad1[PAD(0x60a00, 0x60820)];
+	ulong	nextdescr;	/* 0x60a00 */
+	ulong	pad2[3];
+	ulong	curdescr;	/* 0x60a10 */
+	ulong	pad3[3];
+	ulong	bytecount;	/* 0x60a20 */
+	ulong	pad4[PAD(0x60a40, 0x60a20)];
+	ulong	winctl;		/* 0x60a40 */
+	ulong	pad5[PAD(0x60aa0, 0x60a40)];
+	ulong	aoctl;		/* 0x60aa0 */
+	ulong	pad6[3];
+	ulong	dest;		/* 0x60ab0 */
+	ulong	pad7[3];
+	ulong	blocksize;	/* 0x60ac0 */
 };
