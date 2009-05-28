@@ -22,6 +22,7 @@ init()
 	sys->bind("#r", "/dev", sys->MAFTER);		# rtc
 	sys->bind("#C", "/dev", Sys->MAFTER);		# crypto
 	sys->bind("#o", "/dev", Sys->MAFTER);		# sdio
+	sys->bind("#φ", "/dev", Sys->MAFTER);		# efuse
 	sys->bind("#T", "/dev", Sys->MAFTER);		# sheeva
 	sys->bind("#p", "/prog", sys->MREPL);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);

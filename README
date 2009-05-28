@@ -11,7 +11,7 @@ next steps:
 - nand
 - improve uart (mode setting)
 - crypto support
-- later: gpio,xor,usb,efuse,twsi,spi,sata,audio(i2s),pciexpress
+- later: gpio,xor,usb,twsi,spi,sata,audio(i2s),pciexpress
 
 
 # intro

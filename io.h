@@ -10,6 +10,8 @@ enum {
 	AddrIocfg0 =	Regbase+0x100e0,
 	AddrDevid =	Regbase+0x10034,
 
+	AddrEfuse =	Regbase+0x1008c,
+
 	AddrUart0 =	Regbase+0x12000,
 	AddrUart1 =	Regbase+0x12100,
 
@@ -456,4 +458,15 @@ struct WinReg
 	} w[7];
 	ulong	pad0[PAD(0x80, 0x74)];
 	ulong	intbase;
+};
+
+#define EFUSEREG	((EfuseReg*)AddrEfuse)
+typedef struct EfuseReg EfuseReg;
+struct EfuseReg
+{
+	ulong	protection;
+	ulong	pad0[PAD(0x100a4, 0x1008c)];
+	ulong	lo0, hi0;
+	ulong	lo1, hi1;
+	ulong	ctl;
 };
