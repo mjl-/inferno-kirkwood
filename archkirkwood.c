@@ -129,6 +129,12 @@ archconsole(void)
 	uartconsole();
 }
 
+int
+pcmspecial(char *idstr, ISAConf *isa)
+{
+	return -1;
+}
+
 void
 kbdinit(void)
 {

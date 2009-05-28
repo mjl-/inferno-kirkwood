@@ -124,3 +124,20 @@ typedef struct Vectorpage {
 	uint	vtable[8];
 } Vectorpage;
 extern Vectorpage *page0;
+
+typedef struct DevConf DevConf;
+typedef struct Devport Devport;
+
+struct Devport
+{
+	ulong	port;
+	int	size;		//xxx
+};
+
+struct DevConf
+{
+	ulong	intnum;		/* interrupt number */
+	char	*type;		/* card type, malloced */
+	int	nports;
+	Devport	*ports;
+};

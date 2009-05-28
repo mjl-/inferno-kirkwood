@@ -7,8 +7,6 @@
 #include "io.h"
 #include "version.h"
 
-//extern void (*serwrite)(char *, int) = serialputs;
-
 Mach *m = (Mach*)MACHADDR;
 Proc *up = 0;
 Vectorpage *page0 = (Vectorpage*)KZERO;
@@ -20,6 +18,95 @@ extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 ulong cpuidlecount;
+
+enum {
+	MAXCONF	= 32,
+};
+char *confname[MAXCONF];
+char *confval[MAXCONF];
+int nconf;
+
+
+void
+addconf(char *name, char *val)
+{
+	if(nconf >= MAXCONF)
+		return;
+	confname[nconf] = name;
+	confval[nconf] = val;
+	nconf++;
+}
+
+char*
+getconf(char *name)
+{
+	int i;
+
+	for(i = 0; i < nconf; i++)
+		if(cistrcmp(confname[i], name) == 0)
+			return confval[i];
+	return 0;
+}
+
+/*
+ * parse linux boot parameters.
+ * typically starting at 0x100, consisting of size,tag,data triplets.
+ * size & tag are 4-byte words.  size is in 4-byte words,
+ * including the two words for size,tag header.
+ * we're looking for the nul-terminated data of the "cmdline" tag.
+ * the first tag is "core", the last is "none".
+ */
+enum {
+	Atagcore	= 0x54410001,
+	Atagcmdline	= 0x54410009,
+	Atagnone	= 0x00000000,
+	Atagmax		= 4*1024,	/* parameters are supposed to be in first 16kb memory */
+};
+static void
+options(void)
+{
+	ulong *p = (ulong*)0x100;
+	ulong *e;
+	ulong size;
+	ulong tag;
+	char *k, *v, *next;
+	int end;
+
+	e = p+Atagmax;
+	for(;;) {
+		size = *p++;
+		tag = *p++;
+		if(tag == Atagcore) {
+			p += size-2;
+			break;
+		}
+		if(p >= e)
+			return; /* no options, bad luck */
+	}
+
+	/* just past atagcore */
+	while(p < e) {
+		size = *p++;
+		tag = *p++;
+		if(tag == Atagnone)
+			return;
+		if(tag == Atagcmdline) {
+			k = (char*)p;
+			while(*k != 0) {
+				v = strchr(k, '=');
+				*v = 0;
+				next = strchr(++v, ' ');
+				end = *next == 0;
+				*next = 0;
+				addconf(strdup(k), strdup(v));
+				if(!end)
+					k = next+1;
+			}
+			return;
+		}
+		p += size-2;
+	}
+}
 
 static void
 poolsizeinit(void)
@@ -46,6 +133,7 @@ main(void)
 	xinit();
 	poolinit();
 	poolsizeinit();
+	options();
 	trapinit();
 	clockinit();
 	printinit();
