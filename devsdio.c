@@ -6,7 +6,8 @@
 #include	"../port/error.h"
 #include	"io.h"
 
-#define dprint	if(1)print
+static int debug = 1;
+#define dprint	if(debug)print
 
 char Enocard[] = "no card";
 
@@ -65,7 +66,7 @@ enum {
 	/* swreset */
 	SRresetall	= 1<<8,
 
-	/* norintrstat */
+	/* status */
 	NScmdcomplete	= 1<<0,
 	NSxfercomplete	= 1<<1,
 	NSblockgapevent	= 1<<2,
@@ -79,9 +80,9 @@ enum {
 	NSsuspended	= 1<<12,
 	NSautocmd12done	= 1<<13,
 	NSunexpresp	= 1<<14,
-	NSerrorintr	= 1<<15,
+	NSerror		= 1<<15,
 
-	/* errintrstat */
+	/* errstatus */
 	EScmdtimeout	= 1<<0,
 	EScmdcrc	= 1<<1,
 	EScmdendbit	= 1<<2,
@@ -168,26 +169,27 @@ struct Card {
 	int	sdhc;
 	uint	rca;
 	uchar	resp[Respmax];
+	int	lastcmd;
+	int	lastisapp;
+	int	lasterr;
 };
 
 static Card card;
-
+static Rendez dmar;
 
 enum {
 	Qdir,
 	Qctl,
-	Qcid,
-	Qcsd,
+	Qinfo,
 	Qdata,
 };
 
 static
 Dirtab sdiotab[]={
 	".",		{Qdir, 0, QTDIR},	0,	0555,
-	"sdioctl",	{Qctl, 0},	0,	0666,
-	"sdiocid",	{Qcid, 0},	0,	0444,
-	"sdiocsd",	{Qcsd, 0},	0,	0444,
-	"sdiodata",	{Qdata, 0},	0,	0666,
+	"sdioctl",	{Qctl},			0,	0666,
+	"sdioinfo",	{Qinfo},		0,	0444,
+	"sdiodata",	{Qdata},		0,	0666,
 };
 
 
@@ -212,7 +214,7 @@ bits(uchar *p, int msb, int lsb)
 
 	n = min(nbits, 8-lsb);
 	nbits -= n;
-	v = (*p++>>lsb)&MASK(n);
+	v = (*p++>>lsb) & MASK(n);
 	o = n;
 
 	while(nbits > 0) {
@@ -258,9 +260,86 @@ getresptype(int isapp, ulong cmd)
 	return CMDresp48;
 }
 
-static int lastcmd;
-static int lastisapp;
-static int lasterr;
+char *statusstrs[] = {
+"cmdcomplete",
+"xfercomplete",
+"blockgapevent",
+"dmaintr",
+"txready",
+"rxready",
+"",
+"",
+"cardintr",
+"readwaiton",
+"fifo8wfull",
+"fifo8wavail",
+"suspended",
+"autocmd12done",
+"unexpresp",
+"errorintr",
+};
+static char *
+statusstr(char *p, char *e, ulong v)
+{
+	int i;
+	for(i = 0; i < nelem(statusstrs); i++)
+		if(v & (1<<i))
+			p = seprint(p, e, " %q", statusstrs[i]);
+	return p;
+}
+
+char *errstatusstrs[] = {
+"cmdtimeout",
+"cmdcrc",
+"cmdendbit",
+"cmdindex",
+"datatimeout",
+"rddatacrc",
+"rddataend",
+"",
+"autocmd12",
+"cmdstartbit",
+"xfersize",
+"resptbit",
+"crcendbit",
+"crcstartbit",
+"crcstatus",
+};
+static char *
+errstatusstr(char *p, char *e, ulong v)
+{
+	int i;
+	for(i = 0; i < nelem(errstatusstrs); i++)
+		if(v & (1<<i))
+			p = seprint(p, e, " %q", errstatusstrs[i]);
+	return p;
+}
+
+static void
+printstatus(char *s, ulong status, ulong errstatus)
+{
+	char *p, *e;
+
+	if(!debug)
+		return;
+
+	p = up->genbuf;
+	e = p+sizeof (up->genbuf);
+
+	p = statusstr(p, e, status);
+	p = seprint(p, e, ";");
+	p = errstatusstr(p, e, errstatus);
+	USED(p);
+
+	print("status: %s%s\n", s, up->genbuf);
+}
+
+
+static void
+sdclock(ulong v)
+{
+	SDIOREG->clockdiv = ((100*1000*1000)/v)-1;
+}
 
 static char *errstrs[] = {
 "success",
@@ -272,10 +351,24 @@ static char *errstrs[] = {
 static void
 errorsd(char *s)
 {
-	if(lasterr == SDOk)
-		errorf("%s (%scmd %d)", s, lastisapp ? "a" : "", lastcmd);
+	if(card.lasterr == SDOk)
+		errorf("%s (%scmd %d)", s, card.lastisapp ? "a" : "", card.lastcmd);
 	else
-		errorf("%s, %s for %scmd %d", s, errstrs[-lasterr], lastisapp ? "a" : "", lastcmd);
+		errorf("%s, %s for %scmd %d", s, errstrs[-card.lasterr], card.lastisapp ? "a" : "", card.lastcmd);
+}
+
+static int
+dmafinished(void*)
+{
+	ulong need = NScmdcomplete|NSdmaintr;
+
+	if((SDIOREG->status & need) == need) {
+		dprint("dmadone\n");
+		return 1;
+	}
+	dprint("not dmadone\n");
+	SDIOREG->statusirqmask = NSdmaintr;
+	return 0;
 }
 
 static int
@@ -288,7 +381,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 
 	i = 0;
 	for(;;) {
-		if((reg->hwstate&(HScmdinhibit|HScardbusy)) == 0)
+		if((reg->hwstate & (HScmdinhibit|HScardbusy)) == 0)
 			break;
 		if(i++ >= 50)
 			return SDCardbusy;
@@ -302,13 +395,14 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	dprint("sdcmd, isapp %d, cmd %lud, arg %#lux\n", isapp, cmd, arg);
 
 	/* clear status */
-	reg->norintrstat = MASK(16)&~0;
-	reg->errintrstat = MASK(16)&~0;
-	reg->acmd12errstat = MASK(16)&~0;
+	reg->status = ~0;
+	reg->errstatus = ~0;
+	reg->acmd12errstatus = ~0;
+	printstatus("before cmd: ", reg->status, reg->errstatus);
 
 	/* prepare args & execute command */
-	reg->argcmdlo = MASK(16)&(arg>>0);
-	reg->argcmdhi = MASK(16)&(arg>>16);
+	reg->argcmdlo = (arg>>0) & MASK(16);
+	reg->argcmdhi = (arg>>16) & MASK(16);
 	cmdopts = 0;
 	txmode = 0;
 	if(cmd == 17 || cmd == 18) {
@@ -325,28 +419,38 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	resptype = getresptype(isapp, cmd);
 	reg->cmd = CMDresp(resptype)|cmdopts|CMDcmd(cmd);
 
-	/* poll for completion/error */
-	i = 0;
-	need = NScmdcomplete;
-	if(cmd == 17 || cmd == 18)
-		need |= NSxfercomplete|NSdmaintr;
-	for(;;) {
-		v = reg->norintrstat;
-		if(v&(NSerrorintr|NSunexpresp)) {
-			print("cmd error, %04lux\n", reg->errintrstat);
-			if(reg->errintrstat&EScmdtimeout)
-				return SDTimeout;
+	if(cmd == 17 || cmd == 18) {
+		/* wait for dma interrupt that signals completion */
+		tsleep(&dmar, dmafinished, nil, 250);
+
+		need = NScmdcomplete|NSdmaintr;
+		if((reg->status & need) != need || (reg->status & (NSerror|NSunexpresp)) != 0) {
+			printstatus("dma err: ", reg->status, reg->errstatus);
 			return SDError;
 		}
-		if((v&need) == need)
-			break;
-		if(i++ >= 100) {
-			print("command unfinished\n");
-			return SDError;
+	} else {
+		/* poll for completion/error */
+		need = NScmdcomplete;
+		i = 0;
+		for(;;) {
+			v = reg->status;
+			if(v & (NSerror|NSunexpresp)) {
+				printstatus("error: ", v, reg->errstatus);
+				if(reg->errstatus & EScmdtimeout)
+					return SDTimeout;
+				return SDError;
+			}
+			if((v & need) == need)
+				break;
+			if(i++ >= 100) {
+				print("command unfinished\n");
+				printstatus("timeout: ", v, reg->errstatus);
+				return SDError;
+			}
+			tsleep(&up->sleep, return0, nil, 10);
 		}
-		tsleep(&up->sleep, return0, nil, 10);
 	}
-	if(0)print("success, status %04lux %04lux\n", reg->norintrstat, reg->errintrstat);
+	printstatus("success", reg->status, reg->errstatus);
 
 	/* fetch the response */
 	memset(c->resp, '\0', Respmax);
@@ -355,7 +459,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 		break;
 	case CMDresp136:
 		w = 0;
-		w |= (uvlong)reg->resp[7]&MASK(14);
+		w |= (uvlong)reg->resp[7] & MASK(14);
 		w |= (uvlong)reg->resp[6]<<(0*16+14);
 		w |= (uvlong)reg->resp[5]<<(1*16+14);
 		w |= (uvlong)reg->resp[4]<<(2*16+14);
@@ -372,7 +476,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	case CMDresp48:
 	case CMDresp48busy:
 		w = 0;
-		w |= (uvlong)reg->resp[2]&MASK(6);
+		w |= (uvlong)reg->resp[2] & MASK(6);
 		w |= (uvlong)reg->resp[1]<<(0*16+6);
 		w |= (uvlong)reg->resp[0]<<(1*16+6);
 		putle(c->resp+1, w, 4);
@@ -384,19 +488,19 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 static int
 sdcmd(Card *c, ulong cmd, ulong arg)
 {
-	lastisapp = 0;
-	lastcmd = cmd;
-	lasterr = sdcmd0(c, 0, cmd, arg);
-	return lasterr;
+	c->lastisapp = 0;
+	c->lastcmd = cmd;
+	c->lasterr = sdcmd0(c, 0, cmd, arg);
+	return c->lasterr;
 }
 
 static int
 sdacmd(Card *c, ulong cmd, ulong arg)
 {
-	lastisapp = 1;
-	lastcmd = cmd;
-	lasterr = sdcmd0(c, 1, cmd, arg);
-	return lasterr;
+	c->lastisapp = 1;
+	c->lastcmd = cmd;
+	c->lasterr = sdcmd0(c, 1, cmd, arg);
+	return c->lasterr;
 }
 
 static int
@@ -427,10 +531,9 @@ parsecid(Cid *c, uchar *r)
 }
 
 static char*
-cidstr(Cid *c, char *p, int n)
+cidstr(char *p, char *e, Cid *c)
 {
-	
-	snprint(p, n,
+	return seprint(p, e,
 		"product %s, rev %#ux, serial %#lux, made %04d-%02d, oem %s, manufacturer %#ux\n",
 		c->prodname,
 		c->rev,
@@ -438,7 +541,6 @@ cidstr(Cid *c, char *p, int n)
 		c->year, c->mon,
 		c->oid,
 		c->mid);
-	return p;
 }
 
 static int
@@ -484,7 +586,7 @@ parsecsd(Csd *c, uchar *r)
 }
 
 static char*
-csdstr(Csd *c, char *p, int n)
+csdstr(char *p, char *e, Csd *c)
 {
 	char versbuf[128];
 
@@ -501,7 +603,7 @@ csdstr(Csd *c, char *p, int n)
 			c->v0.vddwmin,
 			c->v0.vddwmax,
 			c->v0.sizemult);
-	snprint(p, n,
+	return seprint(p, e,
 		"version %x\n"
 		"taac %x\n"
 		"nsac %x\n"
@@ -550,7 +652,6 @@ csdstr(Csd *c, char *p, int n)
 		c->permwriteprotect,
 		c->tmpwriteprotect,
 		c->fileformat);
-	return p;
 }
 
 static char*
@@ -589,6 +690,10 @@ sdinit(void)
 {
 	int i, s;
 	ulong v;
+	SdioReg *reg = SDIOREG;
+
+	sdclock(400*1000);
+	reg->hostctl &= ~HChighspeed;
 
 	/* force card to idle state */
 	if(sdcmd(&card, 0, 0) < 0)
@@ -687,6 +792,14 @@ sdinit(void)
 		kprint("csd1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
+	if(card.sdhc) {
+		dprint("enabling sdhc & setting clock to 50mhz\n");
+		sdclock(50*1000*1000);
+		reg->hostctl |= HChighspeed;
+	} else {
+		dprint("leaving sdhc off & setting clock to 25mhz\n");
+		sdclock(25*1000*1000);
+	}
 
 	if(sdcmd(&card, 7, card.rca<<16) < 0)
 		errorsd("selecting card");
@@ -708,6 +821,7 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 {
 	SdioReg *reg = SDIOREG;
 	uchar *buf;
+	ulong arg;
 
 	if(iswrite)
 		error("not yet implemented");
@@ -725,20 +839,21 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 		error("not multiple of sector size");
 
 	/* xxx for some reason i couldn't discover, using "a" directly causes corruption and makes the alloc routines panic in freetype/freeptrs...  i've check with a larger buffer, there doesn't seemt to be corruption before/after the buffer... */
-	buf = malloc(n);
-	if(buf == nil)
-		error(Enomem);
-	
+	buf = smalloc(n);
 	if(waserror()) {
 		free(buf);
 		nexterror();
 	}
 
-	reg->dmaaddrlo = (ulong)buf&MASK(16);
-	reg->dmaaddrhi = ((ulong)buf>>16)&MASK(16);
+	reg->dmaaddrlo = (ulong)buf & MASK(16);
+	reg->dmaaddrhi = ((ulong)buf>>16) & MASK(16);
 	reg->blksize = card.bs;
 	reg->blkcount = n/card.bs;
-	if(sdcmd(&card, 18, (ulong)offset) < 0)
+	if(card.sdhc)
+		arg = offset/card.bs;
+	else
+		arg = offset;
+	if(sdcmd(&card, 18, arg) < 0)
 		errorsd("reading");
 	memmove(a, buf, n);
 
@@ -749,33 +864,78 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 }
 
 static void
+sdiointr(Ureg*, void*)
+{
+	SdioReg *reg = SDIOREG;
+	char buf[128];
+	char *p, *e;
+
+	if(debug) {
+		iprint("sdio intr %lux %lux %lux %lux\n",
+			reg->status,
+			reg->status & reg->statusirqmask,
+			reg->errstatus,
+			reg->errstatus & reg->errstatusirqmask);
+
+		p = buf;
+		e = p+sizeof (buf);
+
+		p = statusstr(p, e, reg->status);
+		p = seprint(p, e, ";");
+		p = errstatusstr(p, e, reg->errstatus);
+		USED(p);
+
+		iprint("intr: %s\n", buf);
+	}
+
+	/*
+	 * for now, interrupts are only used for dma transfers.
+	 * don't clear the status, just make sure we are not called again
+	 * before this interrupt is handled.
+	 */
+	wakeup(&dmar);
+	reg->statusirqmask &= ~NSdmaintr;
+	intrclear(Irqlo, IRQ0sdio);
+}
+
+static void
 sdioreset(void)
 {
 	SdioReg *reg = SDIOREG;
 
-	card.valid = 0;
-
-	// xxx should probably set the clock lower.  and set to 25mhz or 50mhz after card identification.
-
-	/* configure host controller */
-	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15); // xxx HCtimeoutenable;
-
-	/* reset the bus, forcing all cards to idle state */
-	reg->swreset = SRresetall;
-
-	/* disable interrupts */
-	reg->norintrena = 0;
-	reg->errintrena = 0;
-
-	/* enable all status reporting */
-	reg->norintrstatena = MASK(16)&~0;
-	reg->errintrstatena = MASK(16)&~0;
+	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
+	reg->statusirqmask = 0;
+	reg->errstatusirqmask = 0;
+	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
 static void
 sdioinit(void)
 {
-	print("sdioinit\n");
+	SdioReg *reg = SDIOREG;
+
+	card.valid = 0;
+
+	reg->swreset = SRresetall;
+	tsleep(&up->sleep, return0, nil, 50);
+
+	/* reset the bus, forcing all cards to idle state */
+	sdclock(25*1000*1000);
+
+	/* configure host controller */
+	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15); // xxx HCtimeoutenable;
+
+	/* clear status */
+	reg->status = ~0;
+	reg->errstatus = ~0;
+
+	/* enable most status reporting */
+	reg->statusmask = ~(NStxready|NSfifo8wavail);
+	reg->errstatusmask = ~0;
+
+	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
+	reg->statusirqmask = 0;
+	reg->errstatusirqmask = 0;
 }
 
 static Chan*
@@ -799,21 +959,19 @@ sdiostat(Chan* c, uchar *db, int n)
 static Chan*
 sdioopen(Chan* c, int omode)
 {
-	c->aux = nil;
 	return devopen(c, omode, sdiotab, nelem(sdiotab), devgen);
 }
 
 static void
 sdioclose(Chan* c)
 {
-	free(c->aux);
-	c->aux = nil;
+	USED(c);
 }
 
 static long
 sdioread(Chan* c, void* a, long n, vlong offset)
 {
-	char *buf;
+	char *buf, *p, *e;
 
 	switch((ulong)c->qid.path){
 	case Qdir:
@@ -822,22 +980,15 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 		cardstr(&card, up->genbuf, sizeof (up->genbuf));
 		n = readstr(offset, a, n, up->genbuf);
 		break;
-	case Qcid:
+	case Qinfo:
 		if(card.valid == 0)
 			error(Enocard);
-		buf = malloc(READSTR);
-		if(buf == nil)
-			error(Enomem);
-		n = readstr(offset, a, n, cidstr(&card.cid, buf, READSTR));
-		free(buf);
-		break;
-	case Qcsd:
-		if(card.valid == 0)
-			error(Enocard);
-		buf = malloc(READSTR);
-		if(buf == nil)
-			error(Enomem);
-		n = readstr(offset, a, n, csdstr(&card.csd, buf, READSTR));
+		p = buf = smalloc(READSTR);
+		e = p+READSTR;
+		p = cidstr(p, e, &card.cid);
+		p = csdstr(p, e, &card.csd);
+		USED(p);
+		n = readstr(offset, a, n, buf);
 		free(buf);
 		break;
 	case Qdata:
@@ -850,28 +1001,50 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 	return n;
 }
 
+enum {
+	CMreset, CMinit, CMdebug,
+};
+static Cmdtab sdioctl[] = 
+{
+	CMreset,	"reset",	1,
+	CMinit,		"init",		1,
+	CMdebug,	"debug",	2,
+};
+
 static long
 sdiowrite(Chan* c, void* a, long n, vlong offset)
 {
-	char buf[128];
-	SdioReg *reg = SDIOREG;
-
-	USED(offset);
+	Cmdbuf *cb;
+	Cmdtab *ct;
 
 	switch((ulong)c->qid.path){
 	case Qctl:
-		if(n >= sizeof buf)
-			error(Etoobig);
-		memmove(buf, a, n);
-		buf[n] = 0;
-		if(strcmp(buf, "reset") == 0 || strcmp(buf, "reset\n") == 0) {
-			reg->swreset = SRresetall;
-		} else if(strcmp(buf, "init") == 0 || strcmp(buf, "init\n") == 0) {
-			sdinit();
-		} else {
-			print("bad ctl: %q\n", buf);
-			error(Ebadctl);
+		if(!iseve())
+			error(Eperm);
+
+		cb = parsecmd(a, n);
+		if(waserror()) {
+			free(cb);
+			nexterror();
 		}
+		ct = lookupcmd(cb, sdioctl, nelem(sdioctl));
+		switch(ct->index) {
+		case CMreset:
+			sdioinit();
+			break;
+		case CMinit:
+			sdinit();
+			break;
+		case CMdebug:
+			if(strcmp(cb->f[1], "on") == 0)
+				debug = 1;
+			else if(strcmp(cb->f[1], "off") == 0)
+				debug = 0;
+			else
+				error(Ebadctl);
+		}
+		poperror();
+		free(cb);
 		break;
 	case Qdata:
 		n = sdio(a, n, offset, 0);
