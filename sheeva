@@ -2,6 +2,7 @@ dev
 	root
 	cons noscreen archkirkwood
 	env
+	indir
 	mnt
 	pipe
 	prog
@@ -19,7 +20,6 @@ dev
 	sheeva
 	boot
 	efuse
-#	sd
 
 ip
 	il
@@ -138,6 +138,7 @@ root
 	/dis/read.dis
 	/dis/rm.dis
 	/dis/sh.dis
+	/dis/sha1sum.dis
 	/dis/sleep.dis
 	/dis/styxlisten.dis
 	/dis/tail.dis

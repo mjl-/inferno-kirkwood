@@ -229,7 +229,7 @@ kwtransmit(Ether *e)
 		b->rp += n;
 		n = BLEN(b);
 		if(n > 0) {
-			iprint("tx more\n");
+			if(0)iprint("tx more\n");
 			l = t1 = &txring[txnext];
 			txnext = NEXT(txnext, Ntx);
 
