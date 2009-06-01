@@ -31,8 +31,8 @@ enum {
 	AddrCryptoIntr =Regbase+0x3de20,
 	AddrSecurity =	Regbase+0x3de00,
 
-	AddrXorp0 =	Regbase+0x60800,
-	AddrXorp1 =	AddrXorp0+0x100,
+	AddrXore0 =	Regbase+0x60800,
+	AddrXore1 =	AddrXore0+0x100,
 	AddrXore0p0 =	Regbase+0x60810,
 	AddrXore1p0 =	AddrXore0p0+4,
 	AddrXore0p1 =	AddrXore0p0+0x100,
@@ -478,16 +478,16 @@ struct EfuseReg
 	ulong	ctl;
 };
 
-#define XORP0REG	((XorpReg*)AddrXorp0)
-#define XORP1REG	((XorpReg*)AddrXorp1)
-typedef struct XorpReg XorpReg;
-struct XorpReg
+#define XORE0REG	((XoreReg*)AddrXore0)
+#define XORE1REG	((XoreReg*)AddrXore1)
+typedef struct XoreReg XoreReg;
+struct XoreReg
 {
 	ulong	xechar;		/* 0x60800 */
 	ulong	pad0[PAD(0x60830, 0x60800)];
-	ulong	intrcause;	/* 0x60830 */
+	ulong	irq;		/* 0x60830 */
 	ulong	pad1[3];
-	ulong	intrmask;	/* 0x60840 */
+	ulong	irqmask;	/* 0x60840 */
 	ulong	pad2[3];
 	ulong	errorcause;	/* 0x60850 */
 	ulong	pad3[3];

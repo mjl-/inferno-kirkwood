@@ -141,6 +141,7 @@ main(void)
 	archconsole();
 	links();
 	chandevreset();
+	xorinit();
 
 	eve = strdup("inferno");
 
@@ -267,7 +268,6 @@ exit(int inpanic)
 {
 	up = 0;
 
-	/* Shutdown running devices */
 	chandevshutdown();
 
 	if(inpanic && 0){

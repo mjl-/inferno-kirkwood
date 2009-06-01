@@ -45,9 +45,9 @@ lib
 	math
 	kern
 
-
 misc
 	uartkirkwood
+	xor
 
 mod
 	math
