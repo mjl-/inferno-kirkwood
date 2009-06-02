@@ -307,8 +307,9 @@ struct HashReg
 	ulong	cmd;
 	ulong	pad1;
 	ulong	bitcountlo;
-	ulong	bitcounthi;
-	ulong	data;
+	ulong	bitcounthi;	/* 0x3dd24 */
+	ulong	pad2[PAD(0x3dd38, 0x3dd24)];
+	ulong	data;		/* 0x3dd38 */
 };
 
 #define CRYPTREG	((CryptReg*)AddrCrypt)

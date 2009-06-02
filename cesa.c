@@ -33,6 +33,14 @@ enum {
 	Aeskeyready	= 1<<30,
 	Aestermination	= 1<<31,
 
+	/* hash cmd */
+	CMDmd5		= 0<<0,
+	CMDsha1		= 1<<0,
+	CMDcontinue	= 1<<1,
+	CMDbyteswap	= 1<<2,
+	CMDivbyteswap	= 1<<4,
+	CMDdone		= 1<<31,
+
 	/* interrupt cause, irq */
 	Iauthdone	= 1<<0,
 	Idesdone	= 1<<1,
@@ -173,22 +181,52 @@ static ulong
 g32(uchar *p)
 {
 	ulong v = 0;
-	v = (v<<8)|*p++;
-	v = (v<<8)|*p++;
-	v = (v<<8)|*p++;
-	v = (v<<8)|*p++;
+	v |= *p++<<24;
+	v |= *p++<<16;
+	v |= *p++<<8;
+	v |= *p++<<0;
+	USED(p);
+	return v;
+}
+
+static ulong
+g32le(uchar *p)
+{
+	ulong v = 0;
+	v |= *p++<<0;
+	v |= *p++<<8;
+	v |= *p++<<16;
+	v |= *p++<<24;
 	USED(p);
 	return v;
 }
 
 static void
-p32(ulong v, uchar *p)
+p32(uchar *p, ulong v)
 {
 	*p++ = v>>24;
 	*p++ = v>>16;
 	*p++ = v>>8;
 	*p++ = v>>0;
 	USED(p);
+}
+
+static void
+p32le(uchar *p, ulong v)
+{
+	*p++ = v>>0;
+	*p++ = v>>8;
+	*p++ = v>>16;
+	*p++ = v>>24;
+	USED(p);
+}
+
+static ulong
+swap(ulong v)
+{
+	uchar buf[4];
+	p32(buf, v);
+	return g32le(buf);
 }
 
 static void*
@@ -414,14 +452,108 @@ aesecb(uchar *p, int n, AESstate *s, int enc)
 		while((r->cmd & Aestermination) == 0)
 			{}
 
-		p32(r->data[0], p+12);
-		p32(r->data[1], p+8);
-		p32(r->data[2], p+4);
-		p32(r->data[3], p+0);
+		p32(p+12, r->data[0]);
+		p32(p+8, r->data[1]);
+		p32(p+4, r->data[2]);
+		p32(p+0, r->data[3]);
 		p += AESbsize;
 	}
 	qunlock(&crypto);
 }
+
+void
+sum(int sha1, uchar *p, int n, uchar *res)
+{
+	HashReg *r = HASHREG;
+	ulong cmd;
+	uchar *e;
+	int i;
+	uvlong nb;
+	ulong v;
+
+	nb = n*8;
+	CRYPTREG->irqmask = 0;
+
+	/* first all full 64 byte blocks */
+	cmd = sha1 ? CMDsha1 : (CMDmd5|CMDbyteswap);
+	while(n >= 64) {
+		r->cmd = cmd;
+		i = 0;
+		for(e = p+64; p < e; p += 4, i++)
+			r->data = g32(p);
+		cmd |= CMDcontinue;
+		while((r->cmd & CMDdone) == 0)
+			{}
+		n -= 64;
+	}
+
+	if(n+1 > 56) {
+		/* last block with data, but bitcount doesn't fit and needs another */
+		r->cmd = cmd;
+		i = 0;
+		for(e = p+(n & ~(4-1)); p < e; p += 4, i++)
+			r->data = g32(p);
+		v = 0;
+		for(i = 0; i < n % 4; i++)
+			v |= (ulong)*p++ << ((4-1-i)*8);
+		v |= 0x80<<((4-1-i)*8);
+		r->data = v;
+		if(n+1 <= 60)
+			r->data = 0;
+
+		cmd |= CMDcontinue;
+		while((r->cmd & CMDdone) == 0)
+			{}
+
+		/* last block with just zeros */
+		r->cmd = cmd;
+	} else {
+		/* last block with data & bitcount */
+		r->cmd = cmd;
+		i = 0;
+		for(e = p+(n & ~(4-1)); p < e; p += 4, i++)
+			r->data = g32(p);
+		v = 0;
+		for(i = 0; i < n % 4; i++)
+			v |= (ulong)*p++ << ((4-1-i)*8);
+		v |= 0x80<<((4-1-i)*8);
+		r->data = v;
+	}
+
+	/* zero-fill the last block by writing the bitcount */
+	if(sha1) {
+		r->bitcountlo = nb>>32;
+		r->bitcounthi = nb>>0;
+	} else {
+		/* r->cmd byteswap apparently ignores bitcount words... */
+		r->bitcountlo = swap(nb>>0);
+		r->bitcounthi = swap(nb>>32);
+	}
+	while((r->cmd & CMDdone) == 0)
+		{}
+	if(sha1)
+		for(i = 0; i < 5; i++)
+			p32(res+i*4, r->iv[i]);
+	else
+		for(i = 0; i < 4; i++)
+			p32le(res+i*4, r->iv[i]);
+
+}
+
+void
+sha1sum(uchar *p, int n, uchar *res)
+{
+	sum(1, p, n, res);
+	dump("sha1sum", res, 20);
+}
+
+void
+md5sum(uchar *p, int n, uchar *res)
+{
+	sum(0, p, n, res);
+	dump("md5sum", res, 16);
+}
+
 
 void
 aesECBencrypt0(uchar *p, int n, AESstate *s)
