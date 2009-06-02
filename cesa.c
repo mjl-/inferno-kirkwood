@@ -20,6 +20,8 @@ static struct {
 	Key	aesdec;
 } crypto;
 
+static QLock hashlock;
+
 #define MASK(v)	((1<<(v))-1)
 enum {
 	/* aes cmd */
@@ -313,7 +315,6 @@ enum {
 		c->cmd = CMDdisable;
 		c->irq = 0;
 	}
-	c->irqmask = Iacceltdmadone|Itdmaownerr;
 
 	src = smalloc(SIZE);
 	dst = smalloc(SIZE);
@@ -380,7 +381,7 @@ cesalink(void)
 	t->irqerrmask = ~0;
 
 	c->irq = 0;
-	c->irqmask = ~0;
+	c->irqmask = Iacceltdmadone|Itdmaownerr|Iacceltdmacm;
 
 	intrenable(Irqlo, IRQ0crypto, cryptintr, nil, "crypto");
 	intrenable(Irqhi, IRQ1cryptoerr, crypterrintr, nil, "cryptoerr");
@@ -461,99 +462,6 @@ aesecb(uchar *p, int n, AESstate *s, int enc)
 	qunlock(&crypto);
 }
 
-void
-sum(int sha1, uchar *p, int n, uchar *res)
-{
-	HashReg *r = HASHREG;
-	ulong cmd;
-	uchar *e;
-	int i;
-	uvlong nb;
-	ulong v;
-
-	nb = n*8;
-	CRYPTREG->irqmask = 0;
-
-	/* first all full 64 byte blocks */
-	cmd = sha1 ? CMDsha1 : (CMDmd5|CMDbyteswap);
-	while(n >= 64) {
-		r->cmd = cmd;
-		i = 0;
-		for(e = p+64; p < e; p += 4, i++)
-			r->data = g32(p);
-		cmd |= CMDcontinue;
-		while((r->cmd & CMDdone) == 0)
-			{}
-		n -= 64;
-	}
-
-	if(n+1 > 56) {
-		/* last block with data, but bitcount doesn't fit and needs another */
-		r->cmd = cmd;
-		i = 0;
-		for(e = p+(n & ~(4-1)); p < e; p += 4, i++)
-			r->data = g32(p);
-		v = 0;
-		for(i = 0; i < n % 4; i++)
-			v |= (ulong)*p++ << ((4-1-i)*8);
-		v |= 0x80<<((4-1-i)*8);
-		r->data = v;
-		if(n+1 <= 60)
-			r->data = 0;
-
-		cmd |= CMDcontinue;
-		while((r->cmd & CMDdone) == 0)
-			{}
-
-		/* last block with just zeros */
-		r->cmd = cmd;
-	} else {
-		/* last block with data & bitcount */
-		r->cmd = cmd;
-		i = 0;
-		for(e = p+(n & ~(4-1)); p < e; p += 4, i++)
-			r->data = g32(p);
-		v = 0;
-		for(i = 0; i < n % 4; i++)
-			v |= (ulong)*p++ << ((4-1-i)*8);
-		v |= 0x80<<((4-1-i)*8);
-		r->data = v;
-	}
-
-	/* zero-fill the last block by writing the bitcount */
-	if(sha1) {
-		r->bitcountlo = nb>>32;
-		r->bitcounthi = nb>>0;
-	} else {
-		/* r->cmd byteswap apparently ignores bitcount words... */
-		r->bitcountlo = swap(nb>>0);
-		r->bitcounthi = swap(nb>>32);
-	}
-	while((r->cmd & CMDdone) == 0)
-		{}
-	if(sha1)
-		for(i = 0; i < 5; i++)
-			p32(res+i*4, r->iv[i]);
-	else
-		for(i = 0; i < 4; i++)
-			p32le(res+i*4, r->iv[i]);
-
-}
-
-void
-sha1sum(uchar *p, int n, uchar *res)
-{
-	sum(1, p, n, res);
-	dump("sha1sum", res, 20);
-}
-
-void
-md5sum(uchar *p, int n, uchar *res)
-{
-	sum(0, p, n, res);
-	dump("md5sum", res, 16);
-}
-
 
 void
 aesECBencrypt0(uchar *p, int n, AESstate *s)
@@ -583,4 +491,217 @@ aesCBCdecrypt0(uchar *p, int n, AESstate *s)
 {
 	// xxx
 	USED(p, n, s);
+}
+
+
+typedef struct Buf Buf;
+struct Buf
+{
+	uchar	*p;
+	ulong	n;
+	int	finish;
+};
+
+static void
+hashdma(Buf *bufs, int nbufs, DigestState *s, uchar *digest, int sha1)
+{
+	USED(bufs, nbufs, s, digest, sha1);
+	panic("hashdma, xxx");
+}
+
+
+static void
+hashfinish(ulong cmd, uchar *p, int n, uchar *digest, int sha1, uvlong nb)
+{
+	HashReg *r = HASHREG;
+	int i;
+	uchar *e;
+	ulong v;
+
+	if(n+1 > 56) {
+		/* last block with data, but bitcount doesn't fit and needs another */
+		r->cmd = cmd;
+		for(e = p+(n & ~(4-1)); p < e; p += 4)
+			r->data = g32(p);
+		v = 0;
+		for(i = 0; i < n % 4; i++)
+			v |= (ulong)*p++ << ((4-1-i)*8);
+		v |= 0x80<<((4-1-i)*8);
+		r->data = v;
+		if(n+1 <= 60)
+			r->data = 0;
+
+		cmd |= CMDcontinue;
+		while((r->cmd & CMDdone) == 0)
+			{}
+
+		/* last block with just zeros */
+		r->cmd = cmd;
+	} else {
+		/* last block with data & bitcount */
+		r->cmd = cmd;
+		for(e = p+(n & ~(4-1)); p < e; p += 4)
+			r->data = g32(p);
+		v = 0;
+		for(i = 0; i < n % 4; i++)
+			v |= (ulong)*p++ << ((4-1-i)*8);
+		v |= 0x80<<((4-1-i)*8);
+		r->data = v;
+	}
+
+	/* zero-fill the last block by writing the bitcount */
+	if(sha1) {
+		r->bitcountlo = nb>>32;
+		r->bitcounthi = nb>>0;
+	} else {
+		/* r->cmd byteswap apparently ignores bitcount words... */
+		r->bitcountlo = swap(nb>>0);
+		r->bitcounthi = swap(nb>>32);
+	}
+	while((r->cmd & CMDdone) == 0)
+		{}
+	if(sha1)
+		for(i = 0; i < 5; i++)
+			p32(digest+i*4, r->iv[i]);
+	else
+		for(i = 0; i < 4; i++)
+			p32le(digest+i*4, r->iv[i]);
+}
+
+static void
+hashexec(Buf *bufs, int nbufs, DigestState *s, uchar *digest, int sha1)
+{
+	HashReg *r = HASHREG;
+	Buf *b;
+	uchar *p, *e;
+	int i, n, nw;
+	ulong cmd;
+
+	qlock(&hashlock);
+
+	cmd = sha1 ? CMDsha1 : (CMDmd5|CMDbyteswap);
+	nw = sha1 ? 5 : 4;
+	if(s->seeded) {
+		cmd |= CMDcontinue;
+		for(i = 0; i < nw; i++)
+			r->iv[i] = s->state[i];
+	}
+	s->seeded = 1;
+
+	for(i = 0; i < nbufs && !bufs[i].finish; i++) {
+		b = &bufs[i];
+		p = b->p;
+		n = b->n;
+
+		while(n >= 64) {
+			r->cmd = cmd;
+			cmd |= CMDcontinue;
+			for(e = p+64; p < e; p += 4)
+				r->data = g32(p);
+			while((r->cmd & CMDdone) == 0)
+				{}
+			n -= 64;
+			p = e;
+		}
+	}
+
+	if(i < nbufs && bufs[i].finish) {
+		b = &bufs[i];
+		hashfinish(cmd, b->p, b->n, digest, sha1, s->len*8);
+	} else {
+		for(i = 0; i < nw; i++)
+			s->state[i] = r->iv[i];
+	}
+
+	qunlock(&hashlock);
+}
+
+DigestState*
+hash(uchar *p, ulong len, uchar *digest, DigestState *s, int sha1)
+{
+	Buf bufs[3];
+	Buf *b;
+	int nbufs;
+	int nblocks;
+	int n;
+
+	release();
+
+	if(s == nil) {
+		s = smalloc(sizeof s[0]);
+		s->len = 0;
+		s->blen = 0;
+		s->seeded = 0;
+	}
+	s->len += len;
+	nbufs = 0;
+	nblocks = 0;
+
+	if(s->blen > 0) {
+		n = 64-s->blen;
+		if(n > len)
+			n = len;
+		memmove(s->buf+s->blen, p, n);
+		s->blen += n;
+		p += n;
+		len -= n;
+		if(s->blen == 64) {
+			b = &bufs[nbufs++];
+			b->p = s->buf;
+			b->n = 64;
+			b->finish = 0;
+			nblocks++;
+			s->blen = 0;
+		}
+	}
+
+	if(len >= 64) {
+		b = &bufs[nbufs++];
+		b->p = p;
+		b->n = len & ~(64-1);
+		nblocks += b->n/64;
+		b->finish = 0;
+	}
+	len %= 64;
+
+	if(digest != nil) {
+		b = &bufs[nbufs++];
+		b->finish = 1;
+		if(len > 0) {
+			b->p = p;
+			b->n = len;
+		} else {
+			b->p = s->buf;
+			b->n = s->blen;
+		}
+		nblocks++;
+	}
+
+	if(nblocks > 0) {
+		if(nblocks > 64 || 1)
+			hashexec(bufs, nbufs, s, digest, sha1);
+		else
+			hashdma(bufs, nbufs, s, digest, sha1);
+	}
+
+	if(digest == nil && len > 0) {
+		memmove(s->buf, p, len);
+		s->blen = len;
+	}
+
+	acquire();
+
+	return s;
+}
+
+DigestState*
+sha1(uchar *p, ulong len, uchar *digest, DigestState *s)
+{
+	return hash(p, len, digest, s, 1);
+}
+
+DigestState*
+md5(uchar *p, ulong len, uchar *digest, DigestState *s)
+{
+	return hash(p, len, digest, s, 0);
 }

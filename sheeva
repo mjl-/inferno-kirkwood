@@ -125,6 +125,7 @@ root
 	/dis/listen.dis
 	/dis/ls.dis
 	/dis/mc.dis
+	/dis/md5sum.dis
 	/dis/mdb.dis
 	/dis/memfs.dis
 	/dis/mkdir.dis
