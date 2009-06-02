@@ -141,7 +141,6 @@ main(void)
 	archconsole();
 	links();
 	chandevreset();
-	xorinit();
 
 	eve = strdup("inferno");
 

@@ -14,7 +14,6 @@ dev
 	cap
 #	sign
 	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum iprouter plan9 nullmedium pktmedium
-	crypto
 	ether netif netaux
 	sdio
 	sheeva
@@ -32,6 +31,8 @@ ip
 link
 	ethermedium
 	etherkirkwood
+	xor
+	cesa
 
 lib
 	interp
@@ -47,7 +48,6 @@ lib
 
 misc
 	uartkirkwood
-	xor
 
 mod
 	math

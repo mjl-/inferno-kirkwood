@@ -1,47 +1,45 @@
+#define PAD(next, last)	(((next)-4-(last))/4)
+
 enum {
-	Regbase =	0xf1000000,
-	AddrMpp =	Regbase+0x10000,
-	AddrGpio0 =	Regbase+0x10100,
-	AddrGpio1 =	Regbase+0x10140,
-	AddrRtc =	Regbase+0x10300,
+	Regbase		= 0xf1000000,
+	AddrMpp		= Regbase+0x10000,
+	AddrGpio0	= Regbase+0x10100,
+	AddrGpio1	= Regbase+0x10140,
+	AddrRtc		= Regbase+0x10300,
 
-	AddrDeviceid =	Regbase+0x10034,
-	AddrClockctl =	Regbase+0x1004c,
-	AddrIocfg0 =	Regbase+0x100e0,
-	AddrDevid =	Regbase+0x10034,
+	AddrDeviceid	= Regbase+0x10034,
+	AddrClockctl	= Regbase+0x1004c,
+	AddrIocfg0	= Regbase+0x100e0,
+	AddrDevid	= Regbase+0x10034,
 
-	AddrEfuse =	Regbase+0x1008c,
+	AddrEfuse	= Regbase+0x1008c,
 
-	AddrUart0 =	Regbase+0x12000,
-	AddrUart1 =	Regbase+0x12100,
+	AddrUart0	= Regbase+0x12000,
+	AddrUart1	= Regbase+0x12100,
 
-	AddrWin =	Regbase+0x20000,
-	AddrCpucsr =	Regbase+0x20100,
-	AddrIntr =	Regbase+0x20200,
-	AddrTimer =	Regbase+0x20300,
+	AddrWin		= Regbase+0x20000,
+	AddrCpucsr	= Regbase+0x20100,
+	AddrIntr	= Regbase+0x20200,
+	AddrTimer	= Regbase+0x20300,
 
-	AddrTdmaAddr =	Regbase+0x30a00,
-	AddrTdmaCtl =	Regbase+0x30800,
-	AddrTdamIntr =	Regbase+0x308c8,
+	AddrTdma	= Regbase+0x30800,
+	AddrHash	= Regbase+0x3dd00,
+	AddrDes		= Regbase+0x3dd40,
+	AddrAesenc	= Regbase+0x3dd80,
+	AddrAesdec	= Regbase+0x3ddc0,
+	AddrCrypt	= Regbase+0x3de00,
 
-	AddrHash =	Regbase+0x3dd00,
-	AddrDes =	Regbase+0x3dd40,
-	AddrAesenc =	Regbase+0x3dd80,
-	AddrAesdec =	Regbase+0x3ddc0,
-	AddrCryptoIntr =Regbase+0x3de20,
-	AddrSecurity =	Regbase+0x3de00,
+	AddrXore0	= Regbase+0x60800,
+	AddrXore1	= AddrXore0+0x100,
+	AddrXore0p0	= Regbase+0x60810,
+	AddrXore1p0	= AddrXore0p0+4,
+	AddrXore0p1	= AddrXore0p0+0x100,
+	AddrXore1p1	= AddrXore0p1+4,
 
-	AddrXore0 =	Regbase+0x60800,
-	AddrXore1 =	AddrXore0+0x100,
-	AddrXore0p0 =	Regbase+0x60810,
-	AddrXore1p0 =	AddrXore0p0+4,
-	AddrXore0p1 =	AddrXore0p0+0x100,
-	AddrXore1p1 =	AddrXore0p1+4,
+	AddrGbe0	= Regbase+0x72000,
+	AddrGbe1	= Regbase+0x76000,
 
-	AddrGbe0 =	Regbase+0x72000,
-	AddrGbe1 =	Regbase+0x76000,
-
-	AddrSdio =	Regbase+0x90000,
+	AddrSdio	= Regbase+0x90000,
 };
 
 enum {
@@ -232,7 +230,6 @@ enum {
 	LSRfifoerr	= 1<<7,
 };
 
-/* xxx should perhaps be done packed, with uchar's for the relevant fields? */
 #define UART0REG	((UartReg*)AddrUart0)
 #define UART1REG	((UartReg*)AddrUart1)
 typedef struct UartReg UartReg;
@@ -280,11 +277,81 @@ struct AesReg
 	ulong	cmd;
 };
 
+#define DESREG	((DesReg*)AddrDes)
+typedef struct DesReg DesReg;
+struct DesReg
+{
+	ulong	ivlo;
+	ulong	ivhi;
+	ulong	key0lo;
+	ulong	key0hi;
+	ulong	key1lo;
+	ulong	key1hi;
+	ulong	cmd;
+	ulong	pad0;
+	ulong	key2lo;
+	ulong	key2hi;
+	ulong	pad1[2];
+	ulong	datalo;
+	ulong	datahi;
+	ulong	outlo;
+	ulong	outhi;
+};
+
+#define HASHREG	((HashReg*)AddrHash)
+typedef struct HashReg HashReg;
+struct HashReg
+{
+	ulong	iv[5];
+	ulong	pad0;
+	ulong	cmd;
+	ulong	pad1;
+	ulong	bitcountlo;
+	ulong	bitcounthi;
+	ulong	data;
+};
+
+#define CRYPTREG	((CryptReg*)AddrCrypt)
+typedef struct CryptReg CryptReg;
+struct CryptReg
+{
+	ulong	cmd;
+	ulong	descr;
+	ulong	cfg;
+	ulong	status;	/* 0x3de0c */
+	ulong	pad0[PAD(0x3de20, 0x3de0c)];
+	ulong	irq;	/* 0x3de20 */
+	ulong	irqmask;
+};
+
+#define TDMAREG	((TdmaReg*)AddrTdma)
+typedef struct TdmaReg TdmaReg;
+struct TdmaReg
+{
+	ulong	bytecount;
+	ulong	pad0[3];
+	ulong	src;
+	ulong	pad1[3];
+	ulong	dst;
+	ulong	pad2[3];
+	ulong	nextdescr;
+	ulong	pad3[3];
+	ulong	ctl;
+	ulong	pad4[3];
+	ulong	curdescr;	/* 0x30870 */
+	ulong	pad5[PAD(0x308c8, 0x30870)];
+	ulong	irqerr;		/* 0x308c8 */
+	ulong	irqerrmask;	/* 0x308cc */
+	ulong	pad6[PAD(0x30a00, 0x308cc)];
+	struct	{
+		ulong	bar;
+		ulong	winctl;
+	} addr[4];
+};
 
 
 #define GBE0REG	((GbeReg*)AddrGbe0)
 #define GBE1REG	((GbeReg*)AddrGbe1)
-#define PAD(next, last)	(((next)-4-(last))/4)
 typedef struct GbeReg GbeReg;
 struct GbeReg
 {

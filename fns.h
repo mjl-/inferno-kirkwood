@@ -50,7 +50,6 @@ void	serialputs(char *, int);
 void	(*screenputs)(char*, int);
 
 /* xor.c */
-void	xorinit(void);
 void	meminitdma(uchar *buf, long n, uvlong v);
 ulong	crc32cdma(uchar *buf, ulong n);
 void	memdma(uchar *dst, uchar *src, ulong n);

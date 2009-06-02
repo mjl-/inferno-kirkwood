@@ -254,7 +254,7 @@ initengine(XoreReg *r)
 }
 
 void
-xorinit(void)
+xorlink(void)
 {
 	initport(XORE0P0REG);
 	initport(XORE0P1REG);
