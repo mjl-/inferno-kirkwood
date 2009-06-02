@@ -8,19 +8,11 @@
 #include	"interp.h"
 #include	"libsec.h"
 
-typedef struct Key Key;
-struct Key {
-	void	*state;
-	ulong	vers;
-};
-
-static struct {
-	QLock;
-	Key	aesenc;
-	Key	aesdec;
-} crypto;
-
 static QLock hashlock;
+static QLock aeslock;
+static QLock deslock;
+static QLock accellock;
+
 
 #define MASK(v)	((1<<(v))-1)
 enum {
@@ -141,7 +133,6 @@ enum {
 #define Dstburst(v)	((v)<<0)
 #define	Srcburst(v)	((v)<<6)
 
-
 	Srambar		= 0x80000000,
 };
 
@@ -160,22 +151,11 @@ static struct {
 	Rendez;
 } crypt;
 
-static struct {
-	int	done;
-	Rendez;
-} tdma;
-
 
 static int
 cryptdone(void*)
 {
 	return crypt.done;
-}
-
-static int
-tdmadone(void*)
-{
-	return tdma.done;
 }
 
 
@@ -249,11 +229,6 @@ iprint("cryptintr %#lux\n", irq);
 	if(irq & Iacceltdmadone) {
 		crypt.done = 1;
 		wakeup(&crypt);
-		return;
-	}
-	if(irq & Itdmadone) {
-		tdma.done = 1;
-		wakeup(&tdma);
 		return;
 	}
 	if(irq & Iacceldone) {
@@ -388,109 +363,148 @@ cesalink(void)
 }
 
 void
-setupAESstate0(AESstate *s, uchar key[], int keybytes, uchar *ivec)
+setupAESstate(AESstate *s, uchar *key, int keybytes, uchar *ivec)
 {
 	s->keybytes = keybytes;
 	memmove(s->key, key, keybytes);
 	memmove(s->ivec, ivec, sizeof (s->ivec));
-
-	s->setup++;
 }
 
+/* xxx should zero-pad aes ecb encryption blocks */
 void
-aesecb(uchar *p, int n, AESstate *s, int enc)
+aes(uchar *p, int n, AESstate *s, int enc, int cbc)
 {
 	AesReg *r;
 	uchar *e = p+n;
 	ulong *k;
 	uchar *kp, *ke;
-	Key *last;
+	ulong v[4], w[4], *a, *b, *t;
 
-	qlock(&crypto);
-	if(enc) {
-		last = &crypto.aesenc;
-		r = AESENCREG;
-	} else {
-		last = &crypto.aesdec;
-		r = AESDECREG;
+	qlock(&aeslock);
+	r = enc ? AESENCREG : AESDECREG;
+
+	if(s->keybytes == 16)
+		r->cmd = Aeskey128;
+	else if(s->keybytes == 24)
+		r->cmd = Aeskey192;
+	else if(s->keybytes == 32)
+		r->cmd = Aeskey256;
+	else
+		errorf("bad aes keylength %d", s->keybytes);
+
+	kp = s->key;
+	ke = kp+s->keybytes;
+	k = &r->key[7];
+	while(kp < ke) {
+		*k-- = g32(kp);
+		kp += 4;
 	}
 
-	if(last->state != s || s->setup != last->vers) {
-		if(s->keybytes == 16)
-			r->cmd = Aeskey128;
-		else if(s->keybytes == 24)
-			r->cmd = Aeskey192;
-		else if(s->keybytes == 32)
-			r->cmd = Aeskey256;
-		else
-			errorf("bad aes keylength %d", s->keybytes);
-
-		kp = s->key;
-		ke = kp+s->keybytes;
-		k = &r->key[7];
-		while(kp < ke) {
-			*k-- = g32(kp);
-			kp += 4;
-		}
-
-		if(enc == 0) {
-			/* after generating the key, we could save it for later use... */
-			r->cmd |= Aesmakekey;
-			while((r->cmd & Aeskeyready) == 0)
-				{}
-		}
-
-		last->state = s;
-		last->vers = s->setup;
-	}
-
-	while(p < e) {
-		r->data[3] = g32(p+0);
-		r->data[2] = g32(p+4);
-		r->data[1] = g32(p+8);
-		r->data[0] = g32(p+12);
-
-		while((r->cmd & Aestermination) == 0)
+	if(!enc) {
+		/* xxx we should save this for later use */
+		r->cmd |= Aesmakekey;
+		while((r->cmd & Aeskeyready) == 0)
 			{}
-
-		p32(p+12, r->data[0]);
-		p32(p+8, r->data[1]);
-		p32(p+4, r->data[2]);
-		p32(p+0, r->data[3]);
-		p += AESbsize;
 	}
-	qunlock(&crypto);
+
+	if(cbc) {
+		v[0] = g32(s->ivec+0);
+		v[1] = g32(s->ivec+4);
+		v[2] = g32(s->ivec+8);
+		v[3] = g32(s->ivec+12);
+		if(enc) {
+			while(p < e) {
+				r->data[3] = g32(p+0)^v[0];
+				r->data[2] = g32(p+4)^v[1];
+				r->data[1] = g32(p+8)^v[2];
+				r->data[0] = g32(p+12)^v[3];
+
+				while((r->cmd & Aestermination) == 0)
+					{}
+
+				p32(p+0,  v[0]=r->data[3]);
+				p32(p+4,  v[1]=r->data[2]);
+				p32(p+8,  v[2]=r->data[1]);
+				p32(p+12, v[3]=r->data[0]);
+				p += AESbsize;
+			}
+			b = v;
+		} else {
+			a = v;
+			b = w;
+			while(p < e) {
+				r->data[3] = b[0]=g32(p+0);
+				r->data[2] = b[1]=g32(p+4);
+				r->data[1] = b[2]=g32(p+8);
+				r->data[0] = b[3]=g32(p+12);
+
+				while((r->cmd & Aestermination) == 0)
+					{}
+
+				p32(p+0,  a[0]^r->data[3]);
+				p32(p+4,  a[1]^r->data[2]);
+				p32(p+8,  a[2]^r->data[1]);
+				p32(p+12, a[3]^r->data[0]);
+				p += AESbsize;
+				t = a;
+				a = b;
+				b = t;
+			}
+		}
+		p32(s->ivec+0, b[0]);
+		p32(s->ivec+4, b[1]);
+		p32(s->ivec+8, b[2]);
+		p32(s->ivec+12, b[3]);
+	} else
+		while(p < e) {
+			r->data[3] = g32(p+0);
+			r->data[2] = g32(p+4);
+			r->data[1] = g32(p+8);
+			r->data[0] = g32(p+12);
+
+			while((r->cmd & Aestermination) == 0)
+				{}
+
+			p32(p+12, r->data[0]);
+			p32(p+8, r->data[1]);
+			p32(p+4, r->data[2]);
+			p32(p+0, r->data[3]);
+			p += AESbsize;
+		}
+	qunlock(&aeslock);
 }
 
 
 void
-aesECBencrypt0(uchar *p, int n, AESstate *s)
+aesECBencrypt(uchar *p, int n, AESstate *s)
 {
 	release();
-	aesecb(p, n, s, 1);
+	aes(p, n, s, 1, 0);
 	acquire();
 }
 
 void
-aesECBdecrypt0(uchar *p, int n, AESstate *s)
+aesECBdecrypt(uchar *p, int n, AESstate *s)
 {
 	release();
-	aesecb(p, n, s, 0);
+	aes(p, n, s, 0, 0);
 	acquire();
 }
 
 void
-aesCBCencrypt0(uchar *p, int n, AESstate *s)
+aesCBCencrypt(uchar *p, int n, AESstate *s)
 {
-	// xxx
-	USED(p, n, s);
+	release();
+	aes(p, n, s, 1, 1);
+	acquire();
 }
 
 void
-aesCBCdecrypt0(uchar *p, int n, AESstate *s)
+aesCBCdecrypt(uchar *p, int n, AESstate *s)
 {
-	// xxx
-	USED(p, n, s);
+	release();
+	aes(p, n, s, 0, 1);
+	acquire();
 }
 
 
@@ -508,7 +522,6 @@ hashdma(Buf *bufs, int nbufs, DigestState *s, uchar *digest, int sha1)
 	USED(bufs, nbufs, s, digest, sha1);
 	panic("hashdma, xxx");
 }
-
 
 static void
 hashfinish(ulong cmd, uchar *p, int n, uchar *digest, int sha1, uvlong nb)
