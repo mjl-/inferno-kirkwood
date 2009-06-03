@@ -17,23 +17,38 @@ static QLock accellock;
 #define MASK(v)	((1<<(v))-1)
 enum {
 	/* aes cmd */
-	Aeskeymask	= 3<<0,
-	  Aeskey128 = 0,
-	  Aeskey192,
-	  Aeskey256,
-	Aesmakekey	= 1<<2,
-	Aesinbyteswap	= 1<<4,
-	Aesoutbyteswap	= 1<<8,
-	Aeskeyready	= 1<<30,
-	Aestermination	= 1<<31,
+	AESkeymask	= 3<<0,
+	AESkey128	= 0<<0,
+	AESkey192	= 1<<0,
+	AESkey256	= 2<<0,
+	AESmakekey	= 1<<2,
+	AESinbyteswap	= 1<<4,
+	AESoutbyteswap	= 1<<8,
+	AESkeyready	= 1<<30,
+	AESdone		= 1<<31,
+
+	/* des cmd */
+	DESencrypt	= 0<<0,
+	DESdecrypt	= 1<<0,
+	DEStriple	= 1<<1,
+	DESeee		= 0<<2,
+	DESede		= 1<<2,
+	DESecb		= 0<<3,
+	DEScbc		= 1<<3,
+	DESbyteswap	= 1<<4,
+	DESivbyteswap	= 1<<6,
+	DESoutbyteswap	= 1<<8,
+	DESwriteallow	= 1<<29,
+	DESdoneall	= 1<<30,
+	DESdonesingle	= 1<<31,
 
 	/* hash cmd */
-	CMDmd5		= 0<<0,
-	CMDsha1		= 1<<0,
-	CMDcontinue	= 1<<1,
-	CMDbyteswap	= 1<<2,
-	CMDivbyteswap	= 1<<4,
-	CMDdone		= 1<<31,
+	HASHmd5		= 0<<0,
+	HASHsha1	= 1<<0,
+	HASHcontinue	= 1<<1,
+	HASHbyteswap	= 1<<2,
+	HASHivbyteswap	= 1<<4,
+	HASHdone	= 1<<31,
 
 	/* interrupt cause, irq */
 	Iauthdone	= 1<<0,
@@ -55,8 +70,8 @@ enum {
 #define Winsize(v)	(((v)/(64*1024)-1)<<16)
 
 	/* accel command, cmd */
-	CMDactive	= 1<<0,
-	CMDdisable	= 1<<2,
+	ACactive	= 1<<0,
+	ACdisable	= 1<<2,
 
 	/* accel config, cfg */
 	CFGstopondigesterr	= 1<<0,
@@ -287,7 +302,7 @@ enum {
 };
 
 	if(c->status & STactive) {
-		c->cmd = CMDdisable;
+		c->cmd = ACdisable;
 		c->irq = 0;
 	}
 
@@ -325,7 +340,7 @@ enum {
 
 	c->descr = BASE;
 	c->cfg = CFGstopondigesterr|CFGwaitfortdma|CFGactivatetdma;
-	c->cmd = CMDactive;
+	c->cmd = ACactive;
 
 	crypt.done = 0;
 	t->ctl |= Tdmaenable;
@@ -379,18 +394,20 @@ aes(uchar *p, int n, AESstate *s, int enc, int cbc)
 	ulong *k;
 	uchar *kp, *ke;
 	ulong v[4], w[4], *a, *b, *t;
+	ulong cmd = 0;
+
+	if(s->keybytes == 16)
+		cmd = AESkey128;
+	else if(s->keybytes == 24)
+		cmd = AESkey192;
+	else if(s->keybytes == 32)
+		cmd = AESkey256;
+	else
+		errorf("bad aes keylength %d", s->keybytes);
 
 	qlock(&aeslock);
 	r = enc ? AESENCREG : AESDECREG;
-
-	if(s->keybytes == 16)
-		r->cmd = Aeskey128;
-	else if(s->keybytes == 24)
-		r->cmd = Aeskey192;
-	else if(s->keybytes == 32)
-		r->cmd = Aeskey256;
-	else
-		errorf("bad aes keylength %d", s->keybytes);
+	r->cmd = cmd;
 
 	kp = s->key;
 	ke = kp+s->keybytes;
@@ -402,8 +419,8 @@ aes(uchar *p, int n, AESstate *s, int enc, int cbc)
 
 	if(!enc) {
 		/* xxx we should save this for later use */
-		r->cmd |= Aesmakekey;
-		while((r->cmd & Aeskeyready) == 0)
+		r->cmd |= AESmakekey;
+		while((r->cmd & AESkeyready) == 0)
 			{}
 	}
 
@@ -419,7 +436,7 @@ aes(uchar *p, int n, AESstate *s, int enc, int cbc)
 				r->data[1] = g32(p+8)^v[2];
 				r->data[0] = g32(p+12)^v[3];
 
-				while((r->cmd & Aestermination) == 0)
+				while((r->cmd & AESdone) == 0)
 					{}
 
 				p32(p+0,  v[0]=r->data[3]);
@@ -438,7 +455,7 @@ aes(uchar *p, int n, AESstate *s, int enc, int cbc)
 				r->data[1] = b[2]=g32(p+8);
 				r->data[0] = b[3]=g32(p+12);
 
-				while((r->cmd & Aestermination) == 0)
+				while((r->cmd & AESdone) == 0)
 					{}
 
 				p32(p+0,  a[0]^r->data[3]);
@@ -462,7 +479,7 @@ aes(uchar *p, int n, AESstate *s, int enc, int cbc)
 			r->data[1] = g32(p+8);
 			r->data[0] = g32(p+12);
 
-			while((r->cmd & Aestermination) == 0)
+			while((r->cmd & AESdone) == 0)
 				{}
 
 			p32(p+12, r->data[0]);
@@ -508,6 +525,148 @@ aesCBCdecrypt(uchar *p, int n, AESstate *s)
 }
 
 
+/*
+ * the des engine is disabled because libinterp/keyring.c and other,
+ * in-kernel code all call block_cipher or triple_block_cipher.
+ * we cannot as easily override those functions.
+ *
+ * xxx triple des hasn't been tested (it isn't exported to limbo)
+ * xxx we should pad partial blocks with zero bytes, at least for ecb.
+ */
+static void
+des(uchar *p, int n, uchar *key, uchar *ivec, int enc, int triple, int eee)
+{
+	DesReg *r = DESREG;
+	uchar *e, *q;
+	ulong cmd;
+
+	if(n == 0)
+		return;
+
+	qlock(&deslock);
+	cmd = DESwriteallow;
+	cmd |= enc ? DESencrypt : DESdecrypt;
+	cmd |= (ivec != nil) ? DEScbc : DESecb;
+	cmd |= triple ? DEStriple : 0;
+	cmd |= eee ? DESeee : DESede;
+	r->cmd = cmd;
+
+	r->key0lo = g32(key+4);
+	r->key0hi = g32(key+0);
+	if(triple) {
+		r->key1lo = g32(key+12);
+		r->key1hi = g32(key+8);
+		r->key2lo = g32(key+20);
+		r->key2hi = g32(key+16);
+	}
+	if(ivec != nil) {
+		r->ivlo = g32(ivec+4);
+		r->ivhi = g32(ivec+0);
+	}
+
+	e = p+n;
+	q = p;
+
+	/*
+	 * we use the two-entry pipeline, start with writing the first block.
+	 * the engine starts after writing to datahi.
+	 */
+	r->datalo = g32(p+4);
+	r->datahi = g32(p+0);
+	p += 8;
+
+	while(p < e) {
+		while((r->cmd & DESwriteallow) == 0)
+			{}
+		r->datalo = g32(p+4);
+		r->datahi = g32(p+0);
+		p += 8;
+
+		/* we must read from hi first, then lo */
+		p32(q+0, r->outhi);
+		p32(q+4, r->outlo);
+		q += 8;
+	}
+
+	/* read remaining block from pipeline */
+	while((r->cmd & DESdonesingle) == 0)
+		{}
+	p32(q+0, r->outhi);
+	p32(q+4, r->outlo);
+
+	if(ivec != nil) {
+		p32(ivec+4, r->ivlo);
+		p32(ivec+0, r->ivhi);
+	}
+
+	qunlock(&deslock);
+}
+
+void
+setupDESstate(DESstate *s, uchar key[8], uchar *ivec)
+{
+	memmove(s->key, key, sizeof s->key);
+	if(ivec != nil)
+		memmove(s->ivec, ivec, sizeof s->ivec);
+}
+
+void
+desECBencrypt(uchar *p, int n, DESstate *s)
+{
+	des(p, n, s->key, nil, 1, 0, 0);
+}
+
+void
+desECBdecrypt(uchar *p, int n, DESstate *s)
+{
+	des(p, n, s->key, nil, 0, 0, 0);
+}
+
+void
+desCBCencrypt(uchar *p, int n, DESstate *s)
+{
+	des(p, n, s->key, s->ivec, 1, 0, 0);
+}
+
+void
+desCBCdecrypt(uchar *p, int n, DESstate *s)
+{
+	des(p, n, s->key, s->ivec, 0, 0, 0);
+}
+
+void
+setupDES3state(DES3state *s, uchar key[3][8], uchar *ivec)
+{
+	memmove(s->key, key, sizeof s->key);
+	if(ivec != nil)
+		memmove(s->ivec, ivec, sizeof s->ivec);
+}
+
+void
+des3ECBencrypt(uchar *p, int n, DES3state *s)
+{
+	des(p, n, (uchar*)s->key, nil, 1, 1, 0);
+}
+
+void
+des3ECBdecrypt(uchar *p, int n, DES3state *s)
+{
+	des(p, n, (uchar*)s->key, nil, 0, 1, 0);
+}
+
+void
+des3CBCencrypt(uchar *p, int n, DES3state *s)
+{
+	des(p, n, (uchar*)s->key, s->ivec, 1, 1, 0);
+}
+
+void
+des3CBCdecrypt(uchar *p, int n, DES3state *s)
+{
+	des(p, n, (uchar*)s->key, s->ivec, 0, 1, 0);
+}
+
+
 typedef struct Buf Buf;
 struct Buf
 {
@@ -544,8 +703,8 @@ hashfinish(ulong cmd, uchar *p, int n, uchar *digest, int sha1, uvlong nb)
 		if(n+1 <= 60)
 			r->data = 0;
 
-		cmd |= CMDcontinue;
-		while((r->cmd & CMDdone) == 0)
+		cmd |= HASHcontinue;
+		while((r->cmd & HASHdone) == 0)
 			{}
 
 		/* last block with just zeros */
@@ -571,7 +730,7 @@ hashfinish(ulong cmd, uchar *p, int n, uchar *digest, int sha1, uvlong nb)
 		r->bitcountlo = swap(nb>>0);
 		r->bitcounthi = swap(nb>>32);
 	}
-	while((r->cmd & CMDdone) == 0)
+	while((r->cmd & HASHdone) == 0)
 		{}
 	if(sha1)
 		for(i = 0; i < 5; i++)
@@ -592,10 +751,10 @@ hashexec(Buf *bufs, int nbufs, DigestState *s, uchar *digest, int sha1)
 
 	qlock(&hashlock);
 
-	cmd = sha1 ? CMDsha1 : (CMDmd5|CMDbyteswap);
+	cmd = sha1 ? HASHsha1 : (HASHmd5|HASHbyteswap);
 	nw = sha1 ? 5 : 4;
 	if(s->seeded) {
-		cmd |= CMDcontinue;
+		cmd |= HASHcontinue;
 		for(i = 0; i < nw; i++)
 			r->iv[i] = s->state[i];
 	}
@@ -608,10 +767,10 @@ hashexec(Buf *bufs, int nbufs, DigestState *s, uchar *digest, int sha1)
 
 		while(n >= 64) {
 			r->cmd = cmd;
-			cmd |= CMDcontinue;
+			cmd |= HASHcontinue;
 			for(e = p+64; p < e; p += 4)
 				r->data = g32(p);
-			while((r->cmd & CMDdone) == 0)
+			while((r->cmd & HASHdone) == 0)
 				{}
 			n -= 64;
 			p = e;
