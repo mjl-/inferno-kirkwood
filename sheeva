@@ -193,4 +193,5 @@ root
 	/lib/ndb/inferno
 	/lib/ndb/local
 
-	/initsheeva /os/kirkwood/misc/initsheeva
+	/init	/os/kirkwood/misc/initsheeva
+	/netrc	/os/kirkwood/misc/netrc

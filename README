@@ -1,6 +1,7 @@
 # status
 
-boots, uses uart as console, rtc, runs dis programs, basic network support (dhcp & mount working), might read a bit of non-sdhc sd cards.
+boots, uses uart as console, rtc, runs dis programs, basic network
+support (dhcp & mount working), might read a some sd cards.
 
 next steps:
 - find problems/crashes
@@ -30,12 +31,13 @@ $ROOT/os/kirkwood/.
 make sure $ROOT/os/init/sheevainit.b is the same as
 $ROOT/os/kirkwood/sheevainit.b (by copy, symlink or bind).
 
-to compile a kernel, "mk install".  this will create "uisheeva" and
-"uisheeva.gz" (the same kernels, but one is compressed).  these are
-in the "uimage" format, as expected by the sheeva's u-boot.
-
 for compiling a kernel, the program "mkuimage" is needed.  build &
 install it it by "cd mkuimage && mk install".
+
+to compile a kernel, "mk install".  this will create "uisheeva" and
+"uisheeva.gz" (the same kernels, but one is compressed).  these are
+in the "uimage" format, as expected by the sheevaplug's bootloader
+u-boot.
 
 
 # booting
@@ -63,7 +65,7 @@ the patch misc/mdb.b.diff.
 
 to configure network with dhcp, and provide shells on the telnet port:
 
-	run /initsheeva
+	run /netrc
 
 
 # licence

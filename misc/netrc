@@ -1,0 +1,11 @@
+echo -n network...
+x=`{cat /net/ipifc/clone}
+echo bind ether /net/ether0 >/net/ipifc/$x/ctl
+ip/dhcp /net/ipifc/$x
+ndb/cs
+ndb/dns -r &
+echo
+
+echo -n listen telnet...
+listen -A net!*!telnet {sh -i >[2=1]} &
+echo

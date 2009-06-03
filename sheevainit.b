@@ -33,8 +33,7 @@ init()
 	rtc();
 
 	sh := load Sh "/dis/sh.dis";
-	sys->print("shell...\n");
-	sh->init(nil, nil);
+	sh->init(nil, list of {"sh", "-c", "run /init"});
 }
 
 rtc()
