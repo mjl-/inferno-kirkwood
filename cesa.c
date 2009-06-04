@@ -8,6 +8,16 @@
 #include	"interp.h"
 #include	"libsec.h"
 
+/*
+ * todo:
+ * - use security accelerator+tdma
+ * - zero-pad blocks, at least in ecb.  perhaps in cbc too?
+ * - set up decryption key at "aes setup" time, only once?
+ * - treat aes encryption & decryption engines separately?
+ * - enable des acceleration.  it's off now because inferno uses
+ *   functions (e.g. block_cipher) that directly use the expanded key.
+ */
+
 static QLock hashlock;
 static QLock aeslock;
 static QLock deslock;
@@ -603,7 +613,7 @@ des(uchar *p, int n, uchar *key, uchar *ivec, int enc, int triple, int eee)
 }
 
 void
-setupDESstate(DESstate *s, uchar key[8], uchar *ivec)
+setupDESstate0(DESstate *s, uchar key[8], uchar *ivec)
 {
 	memmove(s->key, key, sizeof s->key);
 	if(ivec != nil)
@@ -611,31 +621,31 @@ setupDESstate(DESstate *s, uchar key[8], uchar *ivec)
 }
 
 void
-desECBencrypt(uchar *p, int n, DESstate *s)
+desECBencrypt0(uchar *p, int n, DESstate *s)
 {
 	des(p, n, s->key, nil, 1, 0, 0);
 }
 
 void
-desECBdecrypt(uchar *p, int n, DESstate *s)
+desECBdecrypt0(uchar *p, int n, DESstate *s)
 {
 	des(p, n, s->key, nil, 0, 0, 0);
 }
 
 void
-desCBCencrypt(uchar *p, int n, DESstate *s)
+desCBCencrypt0(uchar *p, int n, DESstate *s)
 {
 	des(p, n, s->key, s->ivec, 1, 0, 0);
 }
 
 void
-desCBCdecrypt(uchar *p, int n, DESstate *s)
+desCBCdecrypt0(uchar *p, int n, DESstate *s)
 {
 	des(p, n, s->key, s->ivec, 0, 0, 0);
 }
 
 void
-setupDES3state(DES3state *s, uchar key[3][8], uchar *ivec)
+setupDES3state0(DES3state *s, uchar key[3][8], uchar *ivec)
 {
 	memmove(s->key, key, sizeof s->key);
 	if(ivec != nil)
@@ -643,25 +653,25 @@ setupDES3state(DES3state *s, uchar key[3][8], uchar *ivec)
 }
 
 void
-des3ECBencrypt(uchar *p, int n, DES3state *s)
+des3ECBencrypt0(uchar *p, int n, DES3state *s)
 {
 	des(p, n, (uchar*)s->key, nil, 1, 1, 0);
 }
 
 void
-des3ECBdecrypt(uchar *p, int n, DES3state *s)
+des3ECBdecrypt0(uchar *p, int n, DES3state *s)
 {
 	des(p, n, (uchar*)s->key, nil, 0, 1, 0);
 }
 
 void
-des3CBCencrypt(uchar *p, int n, DES3state *s)
+des3CBCencrypt0(uchar *p, int n, DES3state *s)
 {
 	des(p, n, (uchar*)s->key, s->ivec, 1, 1, 0);
 }
 
 void
-des3CBCdecrypt(uchar *p, int n, DES3state *s)
+des3CBCdecrypt0(uchar *p, int n, DES3state *s)
 {
 	des(p, n, (uchar*)s->key, s->ivec, 0, 1, 0);
 }
