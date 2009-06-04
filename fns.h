@@ -54,3 +54,7 @@ void	meminitdma(uchar *buf, long n, uvlong v);
 ulong	crc32cdma(uchar *buf, ulong n);
 void	memdma(uchar *dst, uchar *src, ulong n);
 void	xordma(uchar *dst, uchar **src, int nsrc, ulong n);
+
+ulong	tcmstat(void);
+ulong	rcpctl(void);
+ulong	wcpctl(ulong);

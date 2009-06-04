@@ -216,6 +216,18 @@ TEXT getcpuid(SB), $-4
 	MRC	CpMMU, 0, R0, C(CpCPUID), C(0)
 	RET
 
+TEXT tcmstat(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpCPUID), C(0), 2
+	RET
+
+TEXT rcpctl(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpControl), C(0), 0
+	RET
+ 
+TEXT wcpctl(SB), $-4
+	MCR	CpMMU, 0, R0, C(CpControl), C(0), 0
+	RET
+
 TEXT mmuinit(SB), $-4
 	/* enable icache, dcache and mpu */
 	MRC	CpMMU, 0, R0, C(CpControl), C0, 0
