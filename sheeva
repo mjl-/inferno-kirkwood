@@ -15,9 +15,11 @@ dev
 #	sign
 	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum iprouter plan9 nullmedium pktmedium
 	ether netif netaux
+	boot
+	flash
+	ftl
 	sdio
 	sheeva
-	boot
 	efuse
 
 ip
@@ -33,18 +35,16 @@ link
 	etherkirkwood
 	xor
 	cesa
+	flashnand	nand
 
 lib
 	interp
-#	tk
-#	draw
-#	memlayer
-#	memdraw
 	keyring
 	sec
 	mp
 	math
 	kern
+	nandfs
 
 misc
 	uartkirkwood
@@ -52,8 +52,6 @@ misc
 mod
 	math
 	sys
-#	draw
-#	tk
 	keyring
 
 port
@@ -165,6 +163,7 @@ root
 	/dis/lib/bufio.dis
 	/dis/lib/daytime.dis
 	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
 	/dis/lib/dis.dis
 	/dis/lib/encoding/base64.dis
 	/dis/lib/env.dis

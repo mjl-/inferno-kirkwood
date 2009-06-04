@@ -6,6 +6,7 @@ enum {
 	AddrGpio0	= Regbase+0x10100,
 	AddrGpio1	= Regbase+0x10140,
 	AddrRtc		= Regbase+0x10300,
+	AddrNandf       = Regbase+0x10418,
 
 	AddrDeviceid	= Regbase+0x10034,
 	AddrClockctl	= Regbase+0x1004c,
@@ -40,6 +41,9 @@ enum {
 	AddrGbe1	= Regbase+0x76000,
 
 	AddrSdio	= Regbase+0x90000,
+
+
+	PHYSNAND	= 0xf9000000,	// xxx
 };
 
 enum {
@@ -264,6 +268,16 @@ struct RtcReg
 	ulong	alarmdt;
 	ulong	intrmask;
 	ulong	intrcause;
+};
+
+#define NANDFREG ((NandfReg*)AddrNandf)
+typedef struct NandfReg NandfReg;
+struct NandfReg
+{
+	ulong	rdparms;
+	ulong	wrparms;
+	ulong	pad0[PAD(0x70, 0x1c)];
+	ulong	ctl;
 };
 
 

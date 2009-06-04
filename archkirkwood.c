@@ -5,8 +5,10 @@
 #include "fns.h"
 #include "../port/error.h"
 #include "io.h"
+
 #include "../port/netif.h"
 #include "etherif.h"
+#include "../port/flashif.h"
 
 static char *
 devidstr(ulong v)
@@ -24,6 +26,7 @@ archconfinit(void)
 {
 	conf.topofmem = 512*1024*124;
 	m->cpuhz = 1200*1000*1000;
+	m->delayloop = m->cpuhz/6000;  /* initial estimate */
 	conf.devidstr = devidstr(*(ulong*)AddrDevid);
 }
 
@@ -104,9 +107,9 @@ gpioconf(ulong gpp0_oe_val, ulong gpp1_oe_val, ulong gpp0_oe, ulong gpp1_oe)
 void
 archreset(void)
 {
+	/* reset devices to initial state */
 	gpioconf(SheevaOEValLow, SheevaOEValHigh, SheevaOELow, SheevaOEHigh);
 
-	/* reset devices to initial state */
 	if(watchdoghz){
 		addclock0link(wdogclock, watchdoghz);
 		TIMERREG->timerwd = CLOCKFREQ/watchdoghz;
@@ -118,6 +121,7 @@ archreset(void)
 void
 archreboot(void)
 {
+	//dcflushall();
 	CPUCSREG->rstout = RstoutSoft;
 	CPUCSREG->softreset = ResetSystem;
 }
@@ -129,21 +133,32 @@ archconsole(void)
 	uartconsole();
 }
 
-int
-pcmspecial(char *idstr, ISAConf *isa)
-{
-	return -1;
-}
-
 void
 kbdinit(void)
 {
 }
 
-uvlong
-fastticks(uvlong *hz)
+
+void
+archflashwp(Flash*, int)
 {
-	if(hz)
-		*hz = HZ;
-	return m->ticks;
+}
+
+/*
+ * for ../port/devflash.c:/^flashreset
+ * retrieve flash type, virtual base and length and return 0;
+ * return -1 on error (no flash)
+ */
+int
+archflashreset(int bank, Flash *f)
+{
+	if(bank != 0)
+		return -1;
+	f->type = "nand";
+	f->addr = (void*)PHYSNAND;
+	f->size = 0;    /* done by probe */
+	f->width = 1;
+	f->interleave = 0;
+
+	return 0;
 }
