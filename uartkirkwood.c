@@ -7,8 +7,6 @@
 #include "../port/error.h"
 #include "../port/uart.h"
 
-static void delay(void); // xxx get rid of this
-
 enum {
 	UartFREQ =	0, // xxx
 };
@@ -205,7 +203,7 @@ kw_getc(Uart *uart)
 	UartReg *regs = ctlr->regs;
 
 	while((regs->lsr&LSRrx) == 0)
-		delay();
+		delay(1);
 	return regs->rbr;
 }
 
@@ -216,7 +214,7 @@ kw_putc(Uart *uart, int c)
 	UartReg *regs = ctlr->regs;
 
 	while((regs->lsr&LSRthre) == 0)
-		delay();
+		delay(1);
 	regs->thr = c;
 }
 
@@ -252,19 +250,11 @@ uartconsole(void)
 }
 
 
-static void
-delay(void)
-{
-	int i;
-	for(i = 0; i < 1024; i++)
-		;
-}
-
 void
 serialputc(int c)
 {
 	while((UART0REG->lsr&LSRthre) == 0)
-		delay();
+		delay(1);
 	UART0REG->thr = c;
 }
 

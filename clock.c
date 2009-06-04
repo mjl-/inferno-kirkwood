@@ -61,6 +61,8 @@ clockinit(void)
 {
 	TimerReg *tmr = TIMERREG;
 
+	/* TODO adjust m->bootdelay, used by delay() */
+
 	m->ticks = 0;
 
 	tmr->timer0 = tmr->reload0 = CLOCKFREQ/HZ;
@@ -68,6 +70,40 @@ clockinit(void)
 
 	intrenable(Irqbridge, IRQcputimer0, clockintr, nil, "timer0");
 }
+
+
+uvlong
+fastticks(uvlong *hz)
+{
+	if(hz)
+		*hz = HZ;
+	return m->ticks;
+}
+
+void
+microdelay(int l)
+{
+	int i;
+
+	l *= m->delayloop;
+	l /= 1000;
+	if(l <= 0)
+		l = 1;
+	for(i = 0; i < l; i++)
+		{}
+}
+
+void
+delay(int l)
+{
+	ulong i, j;
+
+	j = m->delayloop;
+	while(l-- > 0)
+		for(i=0; i < j; i++)
+			{}
+}
+
 
 void
 clockpoll(void)

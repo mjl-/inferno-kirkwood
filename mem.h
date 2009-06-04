@@ -32,7 +32,7 @@
 #define KTZERO		(KZERO+0x8000)
 #define MACHADDR	(KZERO+0x1000)
 
-#define KSTACK	8192		/* Size of kernel stack */
+#define KSTACK		8192		/* Size of kernel stack */
 
 
 /*

@@ -104,6 +104,7 @@ struct Mach
 	Lock	alarmlock;		/* access to alarm list */
 	void	*alarm;			/* alarms bound to this clock */
 	ulong	cpuhz;
+	ulong	delayloop;
 
 	/* stacks for exceptions */
 	ulong	fiqstack[4];
