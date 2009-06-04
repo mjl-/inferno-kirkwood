@@ -164,25 +164,25 @@ intrbridge(Ureg *ureg, void*)
 	intrclear(Irqlo, IRQ0bridge);
 }
 
-
-void
-trapstacks(void)
-{
-	setr13(PsrMfiq, m->fiqstack+nelem(m->fiqstack));
-	setr13(PsrMirq, m->irqstack+nelem(m->irqstack));
-	setr13(PsrMabt, m->abtstack+nelem(m->abtstack));
-	setr13(PsrMund, m->undstack+nelem(m->undstack));
-}
-
 void
 trapinit(void)
 {
 	int i;
 
-	trapstacks();
+	setr13(PsrMfiq, m->fiqstack+nelem(m->fiqstack));
+	setr13(PsrMirq, m->irqstack+nelem(m->irqstack));
+	setr13(PsrMabt, m->abtstack+nelem(m->abtstack));
+	setr13(PsrMund, m->undstack+nelem(m->undstack));
+
 	memmove(page0->vectors, vectors, sizeof(page0->vectors));
 	memmove(page0->vtable, vtable, sizeof(page0->vtable));
 	/* xxx will have to flush d & i */
+/*
+	dcflush(page0, sizeof(*page0));
+	icflush(page0, sizeof(*page0));
+*/
+	if(0)iprint("TCM present: %lux\n", tcmstat());
+
 
 	for(i = 0; i < nelem(irqlo); i++)
 		intrunset(&irqlo[i]);
@@ -424,6 +424,7 @@ _dumpstack(Ureg*)
 void
 dumpstack(void)
 {
+	print("dumpstack\n");
 }
 
 void
