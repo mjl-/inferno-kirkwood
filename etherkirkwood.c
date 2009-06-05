@@ -9,34 +9,46 @@
 
 #include "etherif.h"
 
+typedef struct Ctlr Ctlr;
 typedef struct Rx Rx;
-struct Rx {
+typedef struct Tx Tx;
+
+struct Rx
+{
 	ulong	cs;
 	ulong	countsize;
-	uchar	*buf;
-	void	*next;
+	ulong	buf;
+	ulong	next;
 };
 
-typedef struct Tx Tx;
-struct Tx {
+struct Tx
+{
 	ulong	cs;
 	ulong	countchk;
-	uchar	*buf;
-	void	*next;
+	ulong	buf;
+	ulong	next;
 };
 
-static Rx *rxring;
-static int rxnext;
+struct Ctlr
+{
+	Lock;
+	GbeReg	*reg;
 
-static Tx *txring;
-static int txnext;
+	Rx	*rx;
+	int	rxnext;
 
+	Tx	*tx;
+	int	txnext;
+};
+
+
+#define MASK(v)	((1<<(v))-1)
 enum {
 	Rxbufsize	= 1024,
-	Nrx	= 512,
+	Nrx		= 512,
 
 	Txbufsize	= 1024,
-	Ntx	= 512,
+	Ntx		= 512,
 
 	Descralign	= 16,
 	Bufalign	= 8,
@@ -54,7 +66,7 @@ enum {
 	RCSmacor	= 1<<1,
 	RCSmacmf	= 2<<1,
 	RCSl4chkshift	= 3,
-	RCSl4chkmask	= (1<<16)-1,
+	RCSl4chkmask	= MASK(16),
 	RCSvlan		= 1<<17,
 	RCSbpdu		= 1<<18,
 	RCSlayer4mask	= 3<<21,
@@ -90,6 +102,9 @@ enum {
 	TCSenableintr	= 1<<23,
 	TCSautomode	= 1<<30,
 	TCSdmaown	= 1<<31,
+
+	/* port cfg */
+	PCFGupromiscuous= 1<<0,
 };
 
 static void
@@ -104,16 +119,17 @@ dumpheader(char *s, uchar *p)
 }
 
 static void
-kwrecv(Ether *ether)
+receive(Ether *e)
 {
 	Rx *r, *p;
 	Block *b;
 	ulong total, n;
 	int i, last;
+	Ctlr *ctlr = e->ctlr;
 
 	for(;;) {
-		r = &rxring[rxnext];
-		if(r->cs&RCSdmaown)
+		r = &ctlr->rx[ctlr->rxnext];
+		if(r->cs & RCSdmaown)
 			break;
 
 		/*
@@ -125,27 +141,27 @@ kwrecv(Ether *ether)
 		 * xxx this should be done more efficiently, like the driver for the intel gigabit card.
 		 */
 
-		if((r->cs&RCSfirst) == 0)
+		if((r->cs & RCSfirst) == 0)
 			panic("rx, first in chain has no First flag!?");
-		if(r->cs&RCSmacerr) {
+		if(r->cs & RCSmacerr) {
 			iprint("rx, ether mac error...\n");
 			r->cs |= RCSdmaown;
 			r->cs |= RCSenableintr;
-			rxnext = NEXT(rxnext, Nrx);
+			ctlr->rxnext = NEXT(ctlr->rxnext, Nrx);
 			continue;
 		}
 
 		total = 0;
 		p = r;
-		i = rxnext;
+		i = ctlr->rxnext;
 		for(;;) {
-			if(p->cs&RCSdmaown)
+			if(p->cs & RCSdmaown)
 				panic("rx, dma-owned in chain of blocks with leading cpu-owned");
 			n = p->countsize>>16;
 			total += n;
-			last = p->cs&RCSlast;
+			last = p->cs & RCSlast;
 
-			p = &rxring[i=NEXT(i, Nrx)];
+			p = &ctlr->rx[i=NEXT(i, Nrx)];
 			if(p == r)
 				panic("rx, circular packet?!");
 
@@ -155,41 +171,42 @@ kwrecv(Ether *ether)
 
 		b = iallocb(total);
 		p = r;
-		i = rxnext;
+		i = ctlr->rxnext;
 		for(;;) {
 			if(b != nil) {
 				n = p->countsize>>16;
-				memmove(b->wp, p->buf, n);
+				memmove(b->wp, (uchar*)p->buf, n);
 				b->wp += n;
 			}
 			p->cs |= RCSdmaown;
 			p->cs |= RCSenableintr;
-			last = p->cs&RCSlast;
+			last = p->cs & RCSlast;
 
-			p = &rxring[i=NEXT(i, Nrx)];
+			p = &ctlr->rx[i=NEXT(i, Nrx)];
 
 			if(last)
 				break;
 		}
 		if(b != nil)
 			b->rp += 2; // xxx ethernet puts two bytes in front?
-		rxnext = i;
+		ctlr->rxnext = i;
 		
 		if(b != nil) {
 			if(0)iprint("rx %ld b\n", BLEN(b));
 			if(0)dumpheader("rx", b->rp);
-			etheriq(ether, b, 1);
+			etheriq(e, b, 1);
 		}
 	}
 }
 
 static void
-kwtransmit(Ether *e)
+txstart(Ether *e)
 {
 	Tx *t0, *t1, *l;
 	Block *b;
 	int n;
-	GbeReg *gbe0 = GBE0REG;
+	Ctlr *ctlr = e->ctlr;
+	GbeReg *reg = ctlr->reg;
 
 	/*
 	 * for now we don't do jumbo frames.
@@ -201,7 +218,7 @@ kwtransmit(Ether *e)
 
 	for(;;) {
 		/* need two free descriptors */
-		if(txring[NEXT(txnext, Ntx)].cs&TCSdmaown) {
+		if(ctlr->tx[NEXT(ctlr->txnext, Ntx)].cs & TCSdmaown) {
 			iprint("tx, tds full\n");
 			break;
 		}
@@ -217,24 +234,24 @@ kwtransmit(Ether *e)
 			continue;
 		}
 
-		l = t0 = &txring[txnext];
-		txnext = NEXT(txnext, Ntx);
+		l = t0 = &ctlr->tx[ctlr->txnext];
+		ctlr->txnext = NEXT(ctlr->txnext, Ntx);
 
 		n = BLEN(b);
 		if(n > Txbufsize)
 			n = Txbufsize;
-		memmove(t0->buf, b->rp, n);
+		memmove((uchar*)t0->buf, b->rp, n);
 		t0->countchk = n<<16;
-		if(0)dumpheader("rx", t0->buf);
+		if(0)dumpheader("rx", (uchar*)t0->buf);
 		b->rp += n;
 		n = BLEN(b);
 		if(n > 0) {
 			if(0)iprint("tx more\n");
-			l = t1 = &txring[txnext];
-			txnext = NEXT(txnext, Ntx);
+			l = t1 = &ctlr->tx[ctlr->txnext];
+			ctlr->txnext = NEXT(ctlr->txnext, Ntx);
 
 			n = BLEN(b);
-			memmove(t1->buf, b->rp, n);
+			memmove((uchar*)t1->buf, b->rp, n);
 			t1->countchk = n<<16;
 			b->rp += n;
 
@@ -244,34 +261,72 @@ kwtransmit(Ether *e)
 		l->cs |= TCSlast|TCSdmaown|TCSenableintr;
 		if(l != t0)
 			t0->cs |= TCSdmaown;
-		gbe0->tqc = 1<<(ENQshift+0);
+		reg->tqc = 1<<(ENQshift+0);
 
 		freeb(b);
 	}
 }
 
 static void
-kwintr(Ureg*, void *arg)
+transmit(Ether *e)
 {
-	GbeReg *gbe0 = GBE0REG;
+	Ctlr *ctlr = e->ctlr;
+
+	ilock(ctlr);
+	txstart(e);
+	iunlock(ctlr);
+}
+
+static void
+interrupt(Ureg*, void *arg)
+{
 	Ether *e = arg;
+	Ctlr *ctlr = e->ctlr;
+	GbeReg *reg = ctlr->reg;
 
 	// xxx link change
-	kwrecv(e);
-	kwtransmit(e);
+	ilock(ctlr);
+	receive(e);
+	txstart(e);
+	iunlock(ctlr);
 
-	gbe0->irq = 0;
-	gbe0->irqe = 0;
+	reg->irq = 0;
+	reg->irqe = 0;
 	intrclear(Irqlo, IRQ0gbe0sum);
 }
 
-static int
-kirkwoodreset(Ether *e)
+
+void
+promiscuous(void *arg, int on)
 {
+	Ether *e = arg;
+	Ctlr *ctlr = e->ctlr;
+	GbeReg *reg = ctlr->reg;
+
+	ilock(ctlr);
+	if(on)
+		reg->portcfg |= PCFGupromiscuous;
+	else
+		reg->portcfg &= ~PCFGupromiscuous;
+	iunlock(ctlr);
+}
+
+void
+multicast(void *arg, uchar *addr, int on)
+{
+	// xxx
+	USED(arg);
+	USED(addr);
+	USED(on);
+}
+
+static void
+ctlrinit(Ctlr *ctlr)
+{
+	Rx *r, *rxring;
+	Tx *t, *txring;
+	uchar *buf;
 	int i;
-	GbeReg *gbe0 = GBE0REG;
-	Rx *r;
-	Tx *t;
 
 	rxring = xspanalloc(Nrx*sizeof (Rx), Descralign, 0);
 	if(rxring == nil)
@@ -280,10 +335,11 @@ kirkwoodreset(Ether *e)
 		r = &rxring[i];
 		r->cs = RCSdmaown|RCSenableintr;
 		r->countsize = Rxbufsize<<Bufsizeshift;
-		r->buf = xspanalloc(Rxbufsize, Bufalign, 0);
-		if(r->buf == nil)
+		buf = xspanalloc(Rxbufsize, Bufalign, 0);
+		if(buf == nil)
 			panic("no mem for rxring buf");
-		r->next = &rxring[NEXT(i, Nrx)];
+		r->buf = (ulong)buf;
+		r->next = (ulong)&rxring[NEXT(i, Nrx)];
 	}
 
 	txring = xspanalloc(Ntx*sizeof (Tx), Descralign, 0);
@@ -293,40 +349,66 @@ kirkwoodreset(Ether *e)
 		t = &txring[i];
 		t->cs = 0;
 		t->countchk = 0;
-		t->buf = xspanalloc(Txbufsize, Bufalign, 0);
-		if(t->buf == nil)
+		buf = xspanalloc(Txbufsize, Bufalign, 0);
+		if(buf == nil)
 			panic("no mem for txring buf");
-		t->next = &txring[NEXT(i, Ntx)];
+		t->buf = (ulong)buf;
+		t->next = (ulong)&txring[NEXT(i, Ntx)];
 	}
 
+	ctlr->rx = rxring;
+	ctlr->rxnext = 0;
+	ctlr->tx = txring;
+	ctlr->txnext = 0;
+}
+
+static int
+reset(Ether *e)
+{
+	Ctlr *ctlr;
+	GbeReg *reg;
+
+	ctlr = malloc(sizeof ctlr[0]);
+	e->ctlr = ctlr;
+	switch(e->ctlrno) {
+	case 0:
+		reg = GBE0REG;
+		ctlr->reg = reg;
+		break;
+	default:
+		panic("bad ether ctlr\n");
+	}
+
+	ctlrinit(ctlr);
+
 	e->attach = nil;
-	e->transmit = kwtransmit;
-	e->interrupt = kwintr;
+	e->transmit = transmit;
+	e->interrupt = interrupt;
 	e->ifstat = nil;
 	e->shutdown = nil;
 	e->ctl = nil;
+
 	e->arg = e;
-	e->promiscuous = nil;
-	e->multicast = nil;
+	e->promiscuous = promiscuous;
+	e->multicast = multicast;
+	e->scanbs = nil;
 
-	gbe0->sdc |= 1<<0; // rx intr only on frame boundary, not descriptor boundary
-	gbe0->irqmask = ~0;
-	gbe0->irqemask = ~0;
-	gbe0->irq = 0;
-	gbe0->irqe = 0;
-	gbe0->euc &= ~(1<<1); // get out of "polling mode"
-
-
-	txnext = 0;
-	gbe0->tcqdp[0] = (ulong)&txring[txnext];
-
-	rxnext = 0;
-	gbe0->crdp[0].r = (ulong)&rxring[rxnext];
-	gbe0->rqc = 1<<(ENQshift+0);
-	gbe0->psc0 |= PSC0portenable;
+	reg->sdc |= 1<<0; // rx intr only on frame boundary, not descriptor boundary
+	reg->irqmask = ~0;
+	reg->irqemask = ~0;
+	reg->irq = 0;
+	reg->irqe = 0;
+	reg->euc &= ~(1<<1); // get out of "polling mode"
 
 
-	debugkey('e', "etherintr", kwintr, 0);
+	reg->tcqdp[0] = (ulong)&ctlr->tx[ctlr->txnext];
+
+	reg->crdp[0].r = (ulong)&ctlr->rx[ctlr->rxnext];
+	reg->rqc = 1<<(ENQshift+0);
+	reg->psc0 |= PSC0portenable;
+
+
+	debugkey('e', "etherintr", interrupt, 0);
 
 	return 0;
 }
@@ -334,5 +416,5 @@ kirkwoodreset(Ether *e)
 void
 etherkirkwoodlink(void)
 {
-	addethercard("kirkwood", kirkwoodreset);
+	addethercard("kirkwood", reset);
 }
