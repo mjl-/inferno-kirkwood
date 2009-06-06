@@ -419,8 +419,8 @@ txstart(Ether *e)
 				t->cs = TCSdmaown;
 		} while(BLEN(b) > 0);
 		t->cs |= TCSlast|TCSenableintr;
-		first->cs |= TCSdmaown;
-		free(b);
+		first->cs |= TCSfirst|TCSdmaown;
+		freeb(b);
 		set = 1;
 	}
 	if(set)
