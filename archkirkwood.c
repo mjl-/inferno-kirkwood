@@ -52,7 +52,6 @@ int
 archether(int ctlrno, Ether *e)
 {
 	GbeReg* reg;
-	ulong ps0;
 
 	switch(ctlrno) {
 	case 0:
@@ -63,15 +62,6 @@ archether(int ctlrno, Ether *e)
 		e->irq = IRQ0gbe0sum;
 		p32(e->ea, reg->macah);
 		p16(e->ea+4, reg->macal);
-		print("ether, mac %02.2ux%2.2ux%2.2ux%2.2ux%2.2ux%2.2ux",
-			e->ea[0], e->ea[1], e->ea[2], e->ea[3], e->ea[4], e->ea[5]);
-		ps0 = reg->ps0;
-		print(", link %s, %s duplex, speed %s, flow control %s\n",
-			(ps0 & (1<<1)) ? "up" : "down",
-			(ps0 & (1<<2)) ? "full" : "half",
-			(ps0 & (1<<4)) ? "1000" : "10/100",
-			(ps0 & (1<<3)) ? "on" : "off"
-		);
 		e->nopt = 0;
 		e->mbps = 1000;
 		return 1;

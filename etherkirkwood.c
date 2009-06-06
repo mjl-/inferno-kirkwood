@@ -11,10 +11,7 @@
 
 /*
  * todo:
- * - error handling, mostly in descriptors
  * - properly make sure preconditions hold (e.g. being idle) when performing some of the operations (enabling port or queue).
- * - jumbo frames
- * - only enable tx interrupt when descriptors are full but we have something to send?
  * - transmit without copying?
  *
  * features that could be implemented:
@@ -59,6 +56,7 @@ struct Ctlr
 	ulong	intrs;
 	ulong	newintrs;
 	ulong	txunderrun;
+	ulong	txringfull;
 	ulong	rxdiscard;
 	ulong	rxoverrun;
 
@@ -151,6 +149,28 @@ enum {
 
 	/* port serial control0, psc0 */
 	PSC0portenable	= 1<<0,
+	PSC0forcelinkup	= 1<<1,
+	PSC0autonegduplexdisable	= 1<<2,
+	PSC0autonegflowcontroldisable	= 1<<3,
+	PSC0autonegpauseadv		= 1<<4,
+	PSC0noforcelinkdown	= 1<<10,
+	PSC0autonegspeeddisable	= 1<<13,
+	PSC0dteadv	= 1<<14,
+
+	PSC0mrumask	= MASK(3)<<17,
+#define PSC0mru(v)	((v)<<17)
+	PSC0mru1518	= 0,
+	PSC0mru1522,
+	PSC0mru1552,
+	PSC0mru9022,
+	PSC0mru9192,
+	PSC0mru9700,
+
+	PSC0fullduplexforce	= 1<<21,
+	PSC0flowcontrolforce	= 1<<22,
+	PSC0gmiispeedgbpsforce	= 1<<23,
+	PSC0miispeedforce100mbps= 1<<24,
+	
 
 	/* port status 0, ps0 */
 	PS0linkup	= 1<<1,
@@ -166,7 +186,7 @@ enum {
 	/* port serial control1, psc1 */
 	PSC1loopback	= 1<<1,
 	PSC1mii		= 0<<2,
-	PSC1rgmii	= 1<<2,
+	PSC1rgmii	= 1<<3,
 	PSC1portreset	= 1<<4,
 	PSC1clockbypass	= 1<<5,
 	PSC1ibautoneg	= 1<<6,
@@ -175,6 +195,7 @@ enum {
 	PSC1gbpsonly	= 1<<11,
 	PSC1encolonbp	= 1<<15,	/* "collision during back-pressure mib counting" */
 	PSC1coldomainlimitmask	= MASK(6)<<16,
+#define PSC1coldomainlimit(v)	(((v) & MASK(6))<<16)
 	PSC1miiallowoddpreamble	= 1<<22,
 
 	/* port status 1, ps1 */
@@ -267,25 +288,15 @@ enum {
 	TCSdmaown	= 1<<31,
 };
 
-static void
-dumpheader(char *s, uchar *p)
-{
-	iprint("%s %02ux%02ux%02ux%02ux%02ux%02ux %02ux%02ux%02ux%02ux%02ux%02ux %02ux%02ux%02ux%02ux%02ux%02ux %02ux%02ux%02ux%02ux%02ux%02ux\n",
-		s,
-		p[0], p[1], p[2], p[3], p[4], p[5],
-		p[6], p[7], p[8], p[9], p[10], p[11],
-		p[12], p[13], p[14], p[15], p[16], p[17],
-		p[18], p[19], p[20], p[21], p[22], p[23]);
-}
 
 static void
 receive(Ether *e)
 {
+	Ctlr *ctlr = e->ctlr;
 	Rx *r, *p;
 	Block *b;
 	ulong total, n;
-	int i, last;
-	Ctlr *ctlr = e->ctlr;
+	int i, last, first;
 
 	for(;;) {
 		r = &ctlr->rx[ctlr->rxnext];
@@ -328,15 +339,22 @@ receive(Ether *e)
 			if(last)
 				break;
 		}
+		/* hardware prepends two bytes, to align ip4 address in packet.  we skip it. */
+		total -= 2;
 
 		b = iallocb(total);
 		p = r;
 		i = ctlr->rxnext;
+		first = 1;
 		for(;;) {
 			if(b != nil) {
 				n = p->countsize>>16;
-				memmove(b->wp, (uchar*)p->buf, n);
+				if(first)
+					memmove(b->wp, (uchar*)p->buf+2, n-2);
+				else
+					memmove(b->wp, (uchar*)p->buf, n);
 				b->wp += n;
+				first = 0;
 			}
 			p->cs |= RCSdmaown;
 			p->cs |= RCSenableintr;
@@ -347,13 +365,10 @@ receive(Ether *e)
 			if(last)
 				break;
 		}
-		if(b != nil)
-			b->rp += 2; // xxx ethernet puts two bytes in front?
 		ctlr->rxnext = i;
 		
 		if(b != nil) {
 			if(0)iprint("rx %ld b\n", BLEN(b));
-			if(0)dumpheader("rx", b->rp);
 			etheriq(e, b, 1);
 		}
 	}
@@ -362,69 +377,55 @@ receive(Ether *e)
 static void
 txstart(Ether *e)
 {
-	Tx *t0, *t1, *l;
-	Block *b;
-	int n;
 	Ctlr *ctlr = e->ctlr;
 	GbeReg *reg = ctlr->reg;
+	Tx *first, *t;
+	Block *b;
+	int set, n, need;
 
 	/*
-	 * for now we don't do jumbo frames.
-	 * so every packet will fit in 2 descriptors (of 1024 bytes each).
-	 * this means we can keep fetching (qget) new packets as long as there are two free transmit descriptors.
-	 * we just copy the data into the transmit descriptor buffers for now.
-	 * then let the ethernet continue.
+	 * we have fixed transmit buffers, of fixed size each.
+	 * we write data to the buffers, and enable the queue.
 	 */
 
-	for(;;) {
-		/* need two free descriptors */
-		if(ctlr->tx[NEXT(ctlr->txnext, Ntx)].cs & TCSdmaown) {
-			iprint("tx, tds full\n");
+	reg->irqemask &= ~IEtxbufferq(0);
+	set = 0;
+	while(qcanread(e->oq)) {
+		need = (e->maxmtu+Txbufsize-1)/Txbufsize;
+		if(ctlr->tx[(ctlr->txnext+need-1) % Ntx].cs & TCSdmaown) {
+			ctlr->txringfull++;
+			reg->irqemask |= IEtxbufferq(0);
+			iprint("txringfull\n");
 			break;
 		}
 
 		b = qget(e->oq);
-		if(b == nil)
-			break;
-		if(BLEN(b) > 2*Txbufsize)
-			panic("packet longer than 2*Txbufsize!?");
-		if(0)iprint("tx %ld b\n", BLEN(b));
-		if(BLEN(b) < 60) {
-			iprint("tx short\n");
-			continue;
-		}
+		if(BLEN(b) > e->maxmtu)
+			panic("packet too long, %ld > maxmtu %d\n", BLEN(b), e->maxmtu);
 
-		l = t0 = &ctlr->tx[ctlr->txnext];
-		ctlr->txnext = NEXT(ctlr->txnext, Ntx);
-
-		n = BLEN(b);
-		if(n > Txbufsize)
-			n = Txbufsize;
-		memmove((uchar*)t0->buf, b->rp, n);
-		t0->countchk = n<<16;
-		if(0)dumpheader("rx", (uchar*)t0->buf);
-		b->rp += n;
-		n = BLEN(b);
-		if(n > 0) {
-			if(0)iprint("tx more\n");
-			l = t1 = &ctlr->tx[ctlr->txnext];
+		first = &ctlr->tx[ctlr->txnext];
+		first->cs = 0;
+		do {
+			t = &ctlr->tx[ctlr->txnext];
 			ctlr->txnext = NEXT(ctlr->txnext, Ntx);
 
 			n = BLEN(b);
-			memmove((uchar*)t1->buf, b->rp, n);
-			t1->countchk = n<<16;
+			if(n > Txbufsize)
+				n = Txbufsize;
+			memmove((uchar*)t->buf, b->rp, n);
+			t->countchk = n<<16;
 			b->rp += n;
-
-			t1->cs = TCSdmaown;
-		}
-		t0->cs = TCSfirst;
-		l->cs |= TCSlast|TCSdmaown|TCSenableintr;
-		if(l != t0)
-			t0->cs |= TCSdmaown;
+			if(t != first)
+				t->cs = TCSdmaown;
+		} while(BLEN(b) > 0);
+		t->cs |= TCSlast|TCSenableintr;
+		first->cs |= TCSdmaown;
+		free(b);
+		set = 1;
+	}
+	if(set)
 		reg->tqc = Txqenable(0);
 
-		freeb(b);
-	}
 }
 
 static void
@@ -451,6 +452,8 @@ interrupt(Ureg*, void *arg)
 
 	irq = reg->irq;
 	irqe = reg->irqe;
+	reg->irq = 0;
+	reg->irqe = 0;
 	if(irqe & IEsum) {
 		/*
 		 * IElinkchange appears to only be set when unplugging.
@@ -473,7 +476,7 @@ interrupt(Ureg*, void *arg)
 
 	if(irq & Irxbufferq(0))
 		receive(e);
-	if(irqe & IEtxbufferq(0))
+	if(qcanread(e->oq) && (irqe & IEtxbufferq(0)))
 		txstart(e);
 
 	if(linkchange && (reg->ps1 & PS1autonegdone)) {
@@ -483,8 +486,6 @@ interrupt(Ureg*, void *arg)
 
 	iunlock(ctlr);
 
-	reg->irq = 0;
-	reg->irqe = 0;
 	intrclear(Irqlo, IRQ0gbe0sum);
 }
 
@@ -514,34 +515,10 @@ multicast(void *arg, uchar *addr, int on)
 }
 
 
-long
-ifstat(Ether *ether, void *a, long n, ulong off)
+static void
+getmibstats(Ctlr *ctlr)
 {
-	Ctlr *ctlr = ether->ctlr;
 	GbeReg *reg = ctlr->reg;
-	char *buf, *p, *e;
-
-	buf = p = smalloc(READSTR);
-	e = p+READSTR;
-
-	ilock(ctlr);
-
-	p = seprint(p, e, "link: %d, ps0 %#lux, ps1 %#lux\n", (reg->ps0 & PS0linkup) != 0, reg->ps0, reg->ps1);
-
-	ctlr->intrs += ctlr->newintrs;
-	p = seprint(p, e, "interrupts: %lud\n", ctlr->intrs);
-	p = seprint(p, e, "new interrupts: %lud\n", ctlr->newintrs);
-	ctlr->newintrs = 0;
-	p = seprint(p, e, "tx underrun: %lud\n", ctlr->txunderrun);
-
-	ctlr->rxdiscard += reg->pxdfc;
-	ctlr->rxoverrun += reg->pxofc;
-	p = seprint(p, e, "rx discarded frames: %lud\n", ctlr->rxdiscard);
-	p = seprint(p, e, "rx overrun frames: %lud\n", ctlr->rxoverrun);
-
-	p = seprint(p, e, "duplex: %s\n", (reg->ps0 & PS0fullduplex) ? "full" : "half");
-	p = seprint(p, e, "flow control: %s\n", (reg->ps0 & PS0flowcontrol) ? "on" : "off");
-	//p = seprint(p, e, "speed: %d mbps\n", );
 
 	/*
 	 * xxx
@@ -580,6 +557,38 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	ctlr->crcerrors += reg->crcerrors;
 	ctlr->collisions += reg->collisions;
 	ctlr->latecollisions += reg->latecollisions;
+}
+
+
+long
+ifstat(Ether *ether, void *a, long n, ulong off)
+{
+	Ctlr *ctlr = ether->ctlr;
+	GbeReg *reg = ctlr->reg;
+	char *buf, *p, *e;
+
+	buf = p = smalloc(READSTR);
+	e = p+READSTR;
+
+	ilock(ctlr);
+
+	getmibstats(ctlr);
+
+	ctlr->intrs += ctlr->newintrs;
+	p = seprint(p, e, "interrupts: %lud\n", ctlr->intrs);
+	p = seprint(p, e, "new interrupts: %lud\n", ctlr->newintrs);
+	ctlr->newintrs = 0;
+	p = seprint(p, e, "tx underrun: %lud\n", ctlr->txunderrun);
+	p = seprint(p, e, "tx ring full: %lud\n", ctlr->txringfull);
+
+	ctlr->rxdiscard += reg->pxdfc;
+	ctlr->rxoverrun += reg->pxofc;
+	p = seprint(p, e, "rx discarded frames: %lud\n", ctlr->rxdiscard);
+	p = seprint(p, e, "rx overrun frames: %lud\n", ctlr->rxoverrun);
+
+	p = seprint(p, e, "duplex: %s\n", (reg->ps0 & PS0fullduplex) ? "full" : "half");
+	p = seprint(p, e, "flow control: %s\n", (reg->ps0 & PS0flowcontrol) ? "on" : "off");
+	//p = seprint(p, e, "speed: %d mbps\n", );
 
 	p = seprint(p, e, "received octets: %llud\n", ctlr->rxoctets);
 	p = seprint(p, e, "bad received octets: %lud\n", ctlr->badrxoctets);
@@ -611,6 +620,7 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	p = seprint(p, e, "crc errors: %lud\n", ctlr->crcerrors);
 	p = seprint(p, e, "collisions: %lud\n", ctlr->collisions);
 	p = seprint(p, e, "late collisions: %lud\n", ctlr->latecollisions);
+	USED(p);
 	iunlock(ctlr);
 
 	n = readstr(off, a, n, buf);
@@ -619,17 +629,18 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 }
 
 enum {
-	CMtest,
+	CMjumbo,
 };
 
 static Cmdtab ctlmsg[] = {
-	CMtest,	"test",	0,
+	CMjumbo,	"jumbo",	2,
 };
 
 long
 ctl(Ether *e, void *p, long n)
 {
 	Ctlr *ctlr = e->ctlr;
+	GbeReg *reg = ctlr->reg;
 	Cmdbuf *cb;
 	Cmdtab *ct;
 
@@ -641,6 +652,15 @@ ctl(Ether *e, void *p, long n)
 
 	ct = lookupcmd(cb, ctlmsg, nelem(ctlmsg));
 	switch(ct->index) {
+	case CMjumbo:
+		if(strcmp(cb->f[1], "on") == 0) {
+			reg->psc0 = (reg->psc0 & ~PSC0mrumask) | PSC0mru(PSC0mru9022);
+			e->maxmtu = 9022;
+		} else if(strcmp(cb->f[1] , "off") == 0) {
+			reg->psc0 = (reg->psc0 & ~PSC0mrumask) | PSC0mru(PSC0mru1522);
+			e->maxmtu = ETHERMAXTU;
+		} else
+			error(Ebadctl);
 	default:
 		error(Ebadctl);
 	}
@@ -696,18 +716,19 @@ static int
 reset(Ether *e)
 {
 	Ctlr *ctlr;
+	Ctlr fakectlr;
 	GbeReg *reg;
 
 	ctlr = malloc(sizeof ctlr[0]);
 	e->ctlr = ctlr;
 	switch(e->ctlrno) {
 	case 0:
-		reg = GBE0REG;
-		ctlr->reg = reg;
+		ctlr->reg = GBE0REG;
 		break;
 	default:
 		panic("bad ether ctlr\n");
 	}
+	reg = ctlr->reg;
 
 	ctlrinit(ctlr);
 
@@ -721,6 +742,9 @@ reset(Ether *e)
 	e->arg = e;
 	e->promiscuous = promiscuous;
 	e->multicast = multicast;
+
+	/* clear stats by reading them into fake ctlr */
+	getmibstats(&fakectlr);
 
 	reg->portcfg = Rxqdefault(0)|Rxqarp(0);
 	reg->portcfgx = 0;
@@ -744,7 +768,8 @@ reset(Ether *e)
 
 	reg->crdp[0].r = (ulong)&ctlr->rx[ctlr->rxnext];
 	reg->rqc = Rxqenable(0);
-	reg->psc0 |= PSC0portenable;
+	reg->psc1 = PSC1rgmii|PSC1encolonbp|PSC1coldomainlimit(0x23);
+	reg->psc0 = PSC0portenable|PSC0autonegflowcontroldisable|PSC0autonegpauseadv|PSC0noforcelinkdown|PSC0mru(PSC0mru1522);
 
 	e->link = (reg->ps0 & PS0linkup) != 0;
 
