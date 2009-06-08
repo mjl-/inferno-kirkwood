@@ -12,8 +12,6 @@
 
 /*
  * todo:
- * - initialise more at first attach instead of at reset.  prevents resource usage when ethernet is unused.
- * - check that we never send too long/short packets.
  * - properly make sure preconditions hold (e.g. being idle) when performing some of the operations (enabling port or queue).
  *
  * features that could be implemented:
@@ -65,6 +63,9 @@ struct Ctlr
 {
 	Lock;
 	GbeReg	*reg;
+
+	Lock	initlock;
+	int	init;
 
 	Rx	*rx;		/* receive descriptors */
 	Block	*rxb[Nrx];	/* blocks belonging to the descriptors */
@@ -139,8 +140,8 @@ enum {
 	SDCtxnobyteswap	= 1<<5,
 	SDCswap64byte	= 1<<6,
 #define SDCtxburst(v)	((v)<<22)
-	/* rx interrupt ipg (inter packet gap), 14 bits.  high bit mirrored at bit 25. */
-#define SDCipgintrx(v)	((((v)>>13) & 1)<<25) | (((v) & MASK(14))<<7)
+	/* rx interrupt ipg (inter packet gap) */
+#define SDCipgintrx(v)	((((v)>>15) & 1)<<25) | (((v) & MASK(15))<<7)
 
 	/* portcfg */
 	PCFGupromiscuous= 1<<0,
@@ -184,7 +185,7 @@ enum {
 	PSC0flowcontrolforce	= 1<<22,
 	PSC0gmiispeedgbpsforce	= 1<<23,
 	PSC0miispeedforce100mbps= 1<<24,
-	
+
 
 	/* port status 0, ps0 */
 	PS0linkup	= 1<<1,
@@ -245,7 +246,7 @@ enum {
 	IEsum		= 1<<31,
 
 	/* tx fifo urgent threshold (tx interrupt coalescing), pxtfut */
-#define TFUTipginttx(v)	(((v) & MASK(14))<<4);
+#define TFUTipginttx(v)	(((v) & MASK(16))<<4);
 
 	/* minimal frame size, mfs */
 	MFS40bytes	= 10<<2,
@@ -307,7 +308,10 @@ enum {
 };
 
 
-/* xxx buffers should really be per controller, not per driver as it is now. */
+/*
+ * xxx buffers should really be per controller, not per driver as it is now.
+ * or otherwise just allocate more buffers for each controller.
+ */
 static Block *
 rxallocb(void)
 {
@@ -418,6 +422,10 @@ txstart(Ether *e)
 		}
 
 		b = qget(e->oq);
+		if(BLEN(b) < e->minmtu || BLEN(b) > e->maxmtu) {
+			freeb(b);
+			continue;
+		}
 		ctlr->txb[ctlr->txhead] = b;
 		t->countchk = BLEN(b)<<16;
 		t->buf = (ulong)b->rp;
@@ -505,7 +513,10 @@ promiscuous(void *arg, int on)
 void
 multicast(void *arg, uchar *addr, int on)
 {
-	// xxx
+	/*
+	 * xxx do we need to do anything?
+	 * we can explicitly filter (pass/block) on multicast addresses if we want...
+	 */
 	USED(arg);
 	USED(addr);
 	USED(on);
@@ -626,6 +637,17 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	return n;
 }
 
+static void
+shutdown(Ether *e)
+{
+	Ctlr *ctlr = e->ctlr;
+	GbeReg *reg = ctlr->reg;
+
+	ilock(ctlr);
+	reg->psc1 |= PSC1portreset;
+	iunlock(ctlr);
+}
+
 enum {
 	CMjumbo,
 };
@@ -671,8 +693,11 @@ ctl(Ether *e, void *p, long n)
 
 
 static void
-ctlrinit(Ctlr *ctlr)
+ctlrinit(Ether *e)
 {
+	Ctlr *ctlr = e->ctlr;
+	GbeReg *reg = ctlr->reg;
+	Ctlr fakectlr;
 	Rx *r;
 	Tx *t;
 	int i;
@@ -718,42 +743,6 @@ ctlrinit(Ctlr *ctlr)
 	}
 	ctlr->txtail = 0;
 	ctlr->txhead = 0;
-}
-
-static int
-reset(Ether *e)
-{
-	Ctlr *ctlr;
-	Ctlr fakectlr;
-	GbeReg *reg;
-
-	ctlr = malloc(sizeof ctlr[0]);
-	e->ctlr = ctlr;
-	switch(e->ctlrno) {
-	case 0:
-		ctlr->reg = GBE0REG;
-		break;
-	default:
-		panic("bad ether ctlr\n");
-	}
-	reg = ctlr->reg;
-
-	/* xxx should probably not do this.  can hostowner set mtu, overriding us? */
-	if(e->maxmtu > Rxblocklen-2)
-		e->maxmtu = Rxblocklen-2;
-
-	ctlrinit(ctlr);
-
-	e->attach = nil;
-	e->transmit = transmit;
-	e->interrupt = interrupt;
-	e->ifstat = ifstat;
-	e->shutdown = nil;
-	e->ctl = ctl;
-
-	e->arg = e;
-	e->promiscuous = promiscuous;
-	e->multicast = multicast;
 
 	/* clear stats by reading them into fake ctlr */
 	getmibstats(&fakectlr);
@@ -762,12 +751,13 @@ reset(Ether *e)
 	reg->portcfgx = 0;
 
 	reg->pxmfs = MFS64bytes;
-	/*
-	 * ipg's (inter packet gaps) do interrupt coalescing.
-	 * the values are in 64 clock cycles, max 0x3fff for 1m cycles.
-	 */
-	reg->sdc = SDCrifb|SDCrxburst(Burst16)|SDCrxnobyteswap|SDCtxnobyteswap|SDCtxburst(Burst16)|SDCipgintrx(~0);
-	reg->pxtfut = TFUTipginttx(~0);
+
+	reg->sdc = SDCrifb|SDCrxburst(Burst16)|SDCrxnobyteswap|SDCtxnobyteswap|SDCtxburst(Burst16);
+
+	/* ipg's (inter packet gaps) for interrupt coalescing, values in units of 64 clock cycles */
+	reg->sdc |= SDCipgintrx(CLOCKFREQ/(800*64));
+	reg->pxtfut = TFUTipginttx(CLOCKFREQ/(800*64));
+
 	reg->irqmask = ~0;
 	reg->irqemask = ~0;
 	reg->irq = 0;
@@ -783,8 +773,50 @@ reset(Ether *e)
 	reg->psc0 = PSC0portenable|PSC0autonegflowcontroldisable|PSC0autonegpauseadv|PSC0noforcelinkdown|PSC0mru(PSC0mru1522);
 
 	e->link = (reg->ps0 & PS0linkup) != 0;
+}
 
-	debugkey('e', "etherintr", interrupt, 0);
+static void
+attach(Ether* e)
+{
+	Ctlr *ctlr = e->ctlr;
+
+	lock(&ctlr->initlock);
+	if(ctlr->init == 0) {
+		ctlrinit(e);
+		ctlr->init = 1;
+	}
+	unlock(&ctlr->initlock);
+}
+
+static int
+reset(Ether *e)
+{
+	Ctlr *ctlr;
+
+	ctlr = malloc(sizeof ctlr[0]);
+	e->ctlr = ctlr;
+	switch(e->ctlrno) {
+	case 0:
+		ctlr->reg = GBE0REG;
+		break;
+	default:
+		panic("bad ether ctlr\n");
+	}
+
+	/* xxx should probably not do this.  can hostowner set mtu, overriding us? */
+	if(e->maxmtu > Rxblocklen-2)
+		e->maxmtu = Rxblocklen-2;
+
+	e->attach = attach;
+	e->transmit = transmit;
+	e->interrupt = interrupt;
+	e->ifstat = ifstat;
+	e->shutdown = shutdown;
+	e->ctl = ctl;
+
+	e->arg = e;
+	e->promiscuous = promiscuous;
+	e->multicast = multicast;
 
 	return 0;
 }
