@@ -9,17 +9,26 @@
 
 #include	"etherif.h"
 
+
 /*
  * todo:
+ * - initialise more at first attach instead of at reset.  prevents resource usage when ethernet is unused.
+ * - check that we never send too long/short packets.
  * - properly make sure preconditions hold (e.g. being idle) when performing some of the operations (enabling port or queue).
- * - transmit without copying?
  *
  * features that could be implemented:
  * - ip4,tcp,udp checksum offloading
  * - unicast/multicast filtering
+ * - jumbo frames
  * - multiple receive queues (e.g. tcp,udp,ethernet priority,other), possibly with priority
- * - receive without copying?
  */
+
+static struct {
+	Lock;
+	Block	*head;
+	int	init;
+} freeblocks;
+
 
 typedef struct Ctlr Ctlr;
 typedef struct Rx Rx;
@@ -41,16 +50,31 @@ struct Tx
 	ulong	next;
 };
 
+enum {
+	Nrx		= 512,
+	Ntx		= 512,
+
+	Rxblocklen	= 2+1522,	/* ethernet uses first two bytes of buffer as padding */
+	Nrxblocks	= Nrx+50,
+
+	Descralign	= 16,
+	Bufalign	= 8,
+};
+
 struct Ctlr
 {
 	Lock;
 	GbeReg	*reg;
 
-	Rx	*rx;
-	int	rxnext;
+	Rx	*rx;		/* receive descriptors */
+	Block	*rxb[Nrx];	/* blocks belonging to the descriptors */
+	int	rxhead;		/* next descr ethernet will write to next */
+	int	rxtail;		/* next descr that might need a buffer */
 
 	Tx	*tx;
-	int	txnext;
+	Block	*txb[Ntx];
+	int	txhead;		/* next descr we can use for new packet */
+	int	txtail;		/* next descr to reclaim on tx complete */
 
 	/* stats */
 	ulong	intrs;
@@ -59,6 +83,7 @@ struct Ctlr
 	ulong	txringfull;
 	ulong	rxdiscard;
 	ulong	rxoverrun;
+	ulong	nofirstlast;
 
 	/* mib stats */
 	uvlong	rxoctets;
@@ -96,17 +121,6 @@ struct Ctlr
 
 #define MASK(v)	((1<<(v))-1)
 enum {
-	Rxbufsize	= 1024,
-	Nrx		= 512,
-
-	Txbufsize	= 1024,
-	Ntx		= 512,
-
-	Descralign	= 16,
-	Bufalign	= 8,
-
-	Bufsizeshift	= 3,
-
 #define	Rxqenable(q)	(1<<(q))
 #define Rxqdisable(q)	(1<<((q)+8)
 #define	Txqenable(q)	(1<<(q))
@@ -242,7 +256,11 @@ enum {
 	MFS60bytes	= 15<<2,
 	MFS64bytes	= 16<<2,
 
+
 	/* receive descriptor */
+#define Bufsize(v)	((v)<<3)
+
+	/* receive descriptor status */
 	RCSmacerr	= 1<<0,
 	RCSmacmask	= 3<<1,
 	RCSmacce	= 0<<1,
@@ -267,7 +285,7 @@ enum {
 	RCSl4chkok	= 1<<30,
 	RCSdmaown	= 1<<31,
 
-	/* transmit descriptor */
+	/* transmit descriptor status */
 	TCSmacerr	= 1<<0,
 	TCSmacmask	= 3<<1,
 	TCSmaclc	= 0<<1,
@@ -289,89 +307,89 @@ enum {
 };
 
 
+/* xxx buffers should really be per controller, not per driver as it is now. */
+static Block *
+rxallocb(void)
+{
+	Block *b;
+
+	ilock(&freeblocks);
+	b = freeblocks.head;
+	if(b != nil) {
+		freeblocks.head = b->next;
+		b->next = nil;
+	}
+	iunlock(&freeblocks);
+	return b;
+}
+
+static void
+rxfreeb(Block *b)
+{
+	b->rp = (uchar*)((uintptr)(b->lim-Rxblocklen) & ~(Bufalign-1));
+	b->wp = b->rp;
+
+	ilock(&freeblocks);
+	b->next = freeblocks.head;
+	freeblocks.head = b;
+	iunlock(&freeblocks);
+}
+
+static void
+rxreplenish(Ctlr *ctlr)
+{
+	Rx *r;
+	Block *b;
+
+	while(ctlr->rxb[ctlr->rxtail] == nil) {
+		b = rxallocb();
+		if(b == nil)
+			break;
+
+		ctlr->rxb[ctlr->rxtail] = b;
+		r = &ctlr->rx[ctlr->rxtail];
+		r->countsize = Bufsize(Rxblocklen);
+		r->buf = (ulong)b->rp;
+		r->cs = RCSdmaown|RCSenableintr;
+		ctlr->rxtail = NEXT(ctlr->rxtail, Nrx);
+	}
+}
+
 static void
 receive(Ether *e)
 {
 	Ctlr *ctlr = e->ctlr;
-	Rx *r, *p;
+	Rx *r;
 	Block *b;
-	ulong total, n;
-	int i, last, first;
+	ulong n;
 
 	for(;;) {
-		r = &ctlr->rx[ctlr->rxnext];
+		r = &ctlr->rx[ctlr->rxhead];
 		if(r->cs & RCSdmaown)
 			break;
 
-		/*
-		 * walk through list, calculating full packet size.
-		 * we allocate that with iallocb, then fill it.
-		 * while filling, we give the descriptors back to dma.
-		 * when the packet is in the block, we give it to the ethernet layer.
-		 *
-		 * xxx this should be done more efficiently, like the driver for the intel gigabit card.
-		 */
+		b = ctlr->rxb[ctlr->rxhead];
+		ctlr->rxb[ctlr->rxhead] = nil;
+		ctlr->rxhead = NEXT(ctlr->rxhead, Nrx);
 
-		if((r->cs & RCSfirst) == 0)
-			panic("rx, first in chain has no First flag!?");
 		if(r->cs & RCSmacerr) {
-			iprint("rx, ether mac error...\n");
-			r->cs |= RCSdmaown;
-			r->cs |= RCSenableintr;
-			ctlr->rxnext = NEXT(ctlr->rxnext, Nrx);
+			freeb(b);
+			continue;
+		}
+		if((r->cs & (RCSfirst|RCSlast)) != (RCSfirst|RCSlast)) {
+			ctlr->nofirstlast++;
+			freeb(b);
 			continue;
 		}
 
-		total = 0;
-		p = r;
-		i = ctlr->rxnext;
-		for(;;) {
-			if(p->cs & RCSdmaown)
-				panic("rx, dma-owned in chain of blocks with leading cpu-owned");
-			n = p->countsize>>16;
-			total += n;
-			last = p->cs & RCSlast;
+		n = r->countsize>>16;
+		b->wp = b->rp+n;
+		b->rp += 2;	/* padding bytes, hardware inserts it to align ip4 address in memory */
 
-			p = &ctlr->rx[i=NEXT(i, Nrx)];
-			if(p == r)
-				panic("rx, circular packet?!");
-
-			if(last)
-				break;
-		}
-		/* hardware prepends two bytes, to align ip4 address in packet.  we skip it. */
-		total -= 2;
-
-		b = iallocb(total);
-		p = r;
-		i = ctlr->rxnext;
-		first = 1;
-		for(;;) {
-			if(b != nil) {
-				n = p->countsize>>16;
-				if(first)
-					memmove(b->wp, (uchar*)p->buf+2, n-2);
-				else
-					memmove(b->wp, (uchar*)p->buf, n);
-				b->wp += n;
-				first = 0;
-			}
-			p->cs |= RCSdmaown;
-			p->cs |= RCSenableintr;
-			last = p->cs & RCSlast;
-
-			p = &ctlr->rx[i=NEXT(i, Nrx)];
-
-			if(last)
-				break;
-		}
-		ctlr->rxnext = i;
-		
-		if(b != nil) {
-			if(0)iprint("rx %ld b\n", BLEN(b));
+		if(b != nil)
 			etheriq(e, b, 1);
-		}
 	}
+	rxreplenish(ctlr);
 }
 
 static void
@@ -379,53 +397,35 @@ txstart(Ether *e)
 {
 	Ctlr *ctlr = e->ctlr;
 	GbeReg *reg = ctlr->reg;
-	Tx *first, *t;
+	Tx *t;
 	Block *b;
-	int set, n, need;
 
-	/*
-	 * we have fixed transmit buffers, of fixed size each.
-	 * we write data to the buffers, and enable the queue.
-	 */
+	/* free transmitted packets */
+	while(ctlr->txtail != ctlr->txhead && (ctlr->tx[ctlr->txtail].cs & TCSdmaown) == 0) {
+		if(ctlr->txb[ctlr->txtail] == nil)
+			panic("no block for sent packet?!");
+		freeb(ctlr->txb[ctlr->txtail]);
+		ctlr->txb[ctlr->txtail] = nil;
+		ctlr->txtail = NEXT(ctlr->txtail, Ntx);
+	}
 
-	reg->irqemask &= ~IEtxbufferq(0);
-	set = 0;
+	/* queue new packets */
 	while(qcanread(e->oq)) {
-		need = (e->maxmtu+Txbufsize-1)/Txbufsize;
-		if(ctlr->tx[(ctlr->txnext+need-1) % Ntx].cs & TCSdmaown) {
+		t = &ctlr->tx[ctlr->txhead];
+		if(t->cs & TCSdmaown) {
 			ctlr->txringfull++;
-			reg->irqemask |= IEtxbufferq(0);
-			iprint("txringfull\n");
 			break;
 		}
 
 		b = qget(e->oq);
-		if(BLEN(b) > e->maxmtu)
-			panic("packet too long, %ld > maxmtu %d\n", BLEN(b), e->maxmtu);
-
-		first = &ctlr->tx[ctlr->txnext];
-		first->cs = 0;
-		do {
-			t = &ctlr->tx[ctlr->txnext];
-			ctlr->txnext = NEXT(ctlr->txnext, Ntx);
-
-			n = BLEN(b);
-			if(n > Txbufsize)
-				n = Txbufsize;
-			memmove((uchar*)t->buf, b->rp, n);
-			t->countchk = n<<16;
-			b->rp += n;
-			if(t != first)
-				t->cs = TCSdmaown;
-		} while(BLEN(b) > 0);
-		t->cs |= TCSlast|TCSenableintr;
-		first->cs |= TCSfirst|TCSdmaown;
-		freeb(b);
-		set = 1;
-	}
-	if(set)
+		ctlr->txb[ctlr->txhead] = b;
+		t->countchk = BLEN(b)<<16;
+		t->buf = (ulong)b->rp;
+		t->cs = TCSpadding|TCSfirst|TCSlast|TCSenableintr|TCSdmaown;
 		reg->tqc = Txqenable(0);
-
+		
+		ctlr->txhead = NEXT(ctlr->txhead, Ntx);
+	}
 }
 
 static void
@@ -447,7 +447,6 @@ interrupt(Ureg*, void *arg)
 	ulong irq, irqe;
 	static int linkchange = 0;
 
-	ilock(ctlr);
 	ctlr->newintrs++;
 
 	irq = reg->irq;
@@ -483,8 +482,6 @@ interrupt(Ureg*, void *arg)
 		e->link = (reg->ps0 & PS0linkup) != 0;
 		linkchange = 0;
 	}
-
-	iunlock(ctlr);
 
 	intrclear(Irqlo, IRQ0gbe0sum);
 }
@@ -567,8 +564,8 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	GbeReg *reg = ctlr->reg;
 	char *buf, *p, *e;
 
-	buf = p = smalloc(READSTR);
-	e = p+READSTR;
+	buf = p = smalloc(2*READSTR);
+	e = p+2*READSTR;
 
 	ilock(ctlr);
 
@@ -585,6 +582,7 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	ctlr->rxoverrun += reg->pxofc;
 	p = seprint(p, e, "rx discarded frames: %lud\n", ctlr->rxdiscard);
 	p = seprint(p, e, "rx overrun frames: %lud\n", ctlr->rxoverrun);
+	p = seprint(p, e, "no first+last flag: %lud\n", ctlr->nofirstlast);
 
 	p = seprint(p, e, "duplex: %s\n", (reg->ps0 & PS0fullduplex) ? "full" : "half");
 	p = seprint(p, e, "flow control: %s\n", (reg->ps0 & PS0flowcontrol) ? "on" : "off");
@@ -654,11 +652,13 @@ ctl(Ether *e, void *p, long n)
 	switch(ct->index) {
 	case CMjumbo:
 		if(strcmp(cb->f[1], "on") == 0) {
+			/* incoming packet queue doesn't expect jumbo frames */
+			error("jumbo disabled");
 			reg->psc0 = (reg->psc0 & ~PSC0mrumask) | PSC0mru(PSC0mru9022);
 			e->maxmtu = 9022;
 		} else if(strcmp(cb->f[1] , "off") == 0) {
 			reg->psc0 = (reg->psc0 & ~PSC0mrumask) | PSC0mru(PSC0mru1522);
-			e->maxmtu = ETHERMAXTU;
+			e->maxmtu = 1522;
 		} else
 			error(Ebadctl);
 	default:
@@ -673,43 +673,51 @@ ctl(Ether *e, void *p, long n)
 static void
 ctlrinit(Ctlr *ctlr)
 {
-	Rx *r, *rxring;
-	Tx *t, *txring;
-	uchar *buf;
+	Rx *r;
+	Tx *t;
 	int i;
+	Block *b;
 
-	rxring = xspanalloc(Nrx*sizeof (Rx), Descralign, 0);
-	if(rxring == nil)
-		panic("no mem for rxring");
+	ilock(&freeblocks);
+	if(freeblocks.init == 0) {
+		for(i = 0; i < Nrxblocks; i++) {
+			b = iallocb(Rxblocklen+Bufalign-1);
+			if(b == nil) {
+				print("out of memory for rx ring\n");
+				break;
+			}
+			b->free = rxfreeb;
+			b->next = freeblocks.head;
+			freeblocks.head = b;
+		}
+		freeblocks.init = 1;
+	}
+	iunlock(&freeblocks);
+
+	ctlr->rx = xspanalloc(Nrx*sizeof (Rx), Descralign, 0);
+	if(ctlr->rx == nil)
+		panic("no memory for rxring");
 	for(i = 0; i < Nrx; i++) {
-		r = &rxring[i];
-		r->cs = RCSdmaown|RCSenableintr;
-		r->countsize = Rxbufsize<<Bufsizeshift;
-		buf = xspanalloc(Rxbufsize, Bufalign, 0);
-		if(buf == nil)
-			panic("no mem for rxring buf");
-		r->buf = (ulong)buf;
-		r->next = (ulong)&rxring[NEXT(i, Nrx)];
+		r = &ctlr->rx[i];
+		r->cs = 0;
+		r->next = (ulong)&ctlr->rx[NEXT(i, Nrx)];
+		ctlr->rxb[i] = nil;
 	}
+	ctlr->rxtail = 0;
+	ctlr->rxhead = 0;
+	rxreplenish(ctlr);
 
-	txring = xspanalloc(Ntx*sizeof (Tx), Descralign, 0);
-	if(txring == nil)
-		panic("no mem for txring");
+	ctlr->tx = xspanalloc(Ntx*sizeof (Tx), Descralign, 0);
+	if(ctlr->tx == nil)
+		panic("no memory for txring");
 	for(i = 0; i < Ntx; i++) {
-		t = &txring[i];
+		t = &ctlr->tx[i];
 		t->cs = 0;
-		t->countchk = 0;
-		buf = xspanalloc(Txbufsize, Bufalign, 0);
-		if(buf == nil)
-			panic("no mem for txring buf");
-		t->buf = (ulong)buf;
-		t->next = (ulong)&txring[NEXT(i, Ntx)];
+		t->next = (ulong)&ctlr->tx[NEXT(i, Ntx)];
+		ctlr->txb[i] = nil;
 	}
-
-	ctlr->rx = rxring;
-	ctlr->rxnext = 0;
-	ctlr->tx = txring;
-	ctlr->txnext = 0;
+	ctlr->txtail = 0;
+	ctlr->txhead = 0;
 }
 
 static int
@@ -729,6 +737,10 @@ reset(Ether *e)
 		panic("bad ether ctlr\n");
 	}
 	reg = ctlr->reg;
+
+	/* xxx should probably not do this.  can hostowner set mtu, overriding us? */
+	if(e->maxmtu > Rxblocklen-2)
+		e->maxmtu = Rxblocklen-2;
 
 	ctlrinit(ctlr);
 
@@ -763,10 +775,9 @@ reset(Ether *e)
 	reg->euirqmask = 0;
 	reg->euirq = 0;
 
+	reg->tcqdp[0] = (ulong)&ctlr->tx[ctlr->txhead];
 
-	reg->tcqdp[0] = (ulong)&ctlr->tx[ctlr->txnext];
-
-	reg->crdp[0].r = (ulong)&ctlr->rx[ctlr->rxnext];
+	reg->crdp[0].r = (ulong)&ctlr->rx[ctlr->rxhead];
 	reg->rqc = Rxqenable(0);
 	reg->psc1 = PSC1rgmii|PSC1encolonbp|PSC1coldomainlimit(0x23);
 	reg->psc0 = PSC0portenable|PSC0autonegflowcontroldisable|PSC0autonegpauseadv|PSC0noforcelinkdown|PSC0mru(PSC0mru1522);
