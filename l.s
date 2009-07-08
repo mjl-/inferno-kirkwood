@@ -209,7 +209,7 @@ TEXT gotopc(SB), $-4
 	RET
 
 TEXT idle(SB), $-4
-	MCR	CpMMU, 0, R0, C(CpPower), C(0), 4
+	MCR	CpMMU, 0, R0, C(CpCacheCtl), C(0), 4
 	RET
 
 TEXT getcpuid(SB), $-4
@@ -234,4 +234,13 @@ TEXT mmuinit(SB), $-4
 	ORR	$(CpCrrob|CpCIcache|CpCDcache), R0
 	BIC	$(CpCDcache), R0	/* no dcache for now, will have to flush in drivers doing dma first. */
 	MCR	CpMMU, 0, R0, C(CpControl), C0, 0
+	RET
+
+
+TEXT icflushall(SB), $-4
+	MCR	CpMMU, 0, R1, C(CpCacheCtl), C5, 0 
+	RET
+
+TEXT dcflushall(SB), $-4
+	MCR	CpMMU, 0, R1, C(CpCacheCtl), C6, 0
 	RET

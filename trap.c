@@ -176,7 +176,6 @@ trapinit(void)
 
 	memmove(page0->vectors, vectors, sizeof(page0->vectors));
 	memmove(page0->vtable, vtable, sizeof(page0->vtable));
-	/* xxx will have to flush d & i */
 /*
 	dcflush(page0, sizeof(*page0));
 	icflush(page0, sizeof(*page0));

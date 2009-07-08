@@ -25,6 +25,7 @@ void
 archconfinit(void)
 {
 	conf.topofmem = 512*1024*124;
+
 	m->cpuhz = 1200*1000*1000;
 	m->delayloop = m->cpuhz/6000;  /* initial estimate */
 	conf.devidstr = devidstr(*(ulong*)AddrDevid);
@@ -118,8 +119,9 @@ archreboot(void)
 	//dcflushall();
 	CPUCSREG->rstout = RstoutSoft;
 	CPUCSREG->softreset = ResetSystem;
+	for(;;)
+		spllo();
 }
-
 
 void
 archconsole(void)
@@ -150,7 +152,7 @@ archflashreset(int bank, Flash *f)
 		return -1;
 	f->type = "nand";
 	f->addr = (void*)PHYSNAND;
-	f->size = 0;    /* done by probe */
+	f->size = 0;	/* done by probe */
 	f->width = 1;
 	f->interleave = 0;
 

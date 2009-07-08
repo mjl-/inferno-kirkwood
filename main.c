@@ -289,10 +289,16 @@ linkproc(void)
 	pexit("end proc", 1);
 }
 
-void
-segflush(void *, ulong)
+int
+segflush(void *a, ulong n)
 {
-	/* xxx */
+	//dcflushall(); 
+	//icflushall(); 
+
+	//dcflush(a, n);
+	//icflush(a, n);
+	//l2cache(a, n);
+	return 0;
 }
 
 void

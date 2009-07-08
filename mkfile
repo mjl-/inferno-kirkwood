@@ -59,7 +59,8 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 
 
 ui$CONF: i$CONF
-	mkuimage $KLOAD $KTZERO i$CONF >$target
+	kstrip -o i$CONF.st i$CONF
+	mkuimage $KLOAD $KTZERO i$CONF.st >$target
 
 ui$CONF.gz: i$CONF
 	gzip <i$CONF >i$CONF.gz

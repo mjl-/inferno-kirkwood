@@ -192,5 +192,10 @@ root
 	/lib/ndb/inferno
 	/lib/ndb/local
 
+	/usr/inferno
+	/usr/inferno/namespace
+	/usr/inferno/keyring
+	/usr/inferno/lib
+
 	/init	/os/kirkwood/misc/initsheeva
 	/netrc	/os/kirkwood/misc/netrc

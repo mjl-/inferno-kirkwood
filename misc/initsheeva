@@ -1,12 +1,15 @@
 #!/dis/sh.dis
-
 load std
+autoload=(std)
 
 #run /netrc
 
 mount {mntgen} /n
 memfs /tmp
 
+# echo init > /dev/sdioctl
+# cat /dev/sdioctl
+# dossrv  -f /dev/sdiodata -m /n/dos
 while {} {
 	echo shell...
 	sh -i

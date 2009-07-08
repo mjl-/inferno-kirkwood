@@ -1,12 +1,12 @@
 diff --git a/os/port/flashnand.c b/os/port/flashnand.c
-index e58c5a6..890fd15 100644
+index e58c5a6..a1a4189 100644
 --- a/os/port/flashnand.c
 +++ b/os/port/flashnand.c
 @@ -26,6 +26,8 @@ static Nandtab nandtab[] = {
  
  	{ 0x98,	0xe6,	9,		16,		1024,	1,		4,		25 }, /* Toshiba TC58V64AFT */
  	{ 0x98,	0x73,	9,		32,		1024,	1,		10,		25},	/* Toshiba TC56V128AFT */
-+	{ 0xad, 0xdc,	9,		32,		4096,	1,		3,		15},	/* Hynix HY27US08121A */
++	{ 0xad, 0xdc,	11,		64,		4096,	1,		3,		25},	/* Hynix HY27UF084G2M */
 +
  	/* Generic entries which take timings from Toshiba SMIL example code */
  	{ -1,		0xea,	8,		16,		512,		20,		400,		100	 },

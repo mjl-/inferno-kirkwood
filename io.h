@@ -2,6 +2,9 @@
 
 enum {
 	Regbase		= 0xf1000000,
+	AddrSDramc	= Regbase+0x01400,
+	AddrSDramd	= Regbase+0x01500,
+
 	AddrMpp		= Regbase+0x10000,
 	AddrGpio0	= Regbase+0x10100,
 	AddrGpio1	= Regbase+0x10140,
@@ -384,7 +387,7 @@ struct GbeReg
 	ulong	euc;
 	ulong	_pad3[PAD(0x72200, 0x720b0)];
 	struct {
-		ulong	addr;
+		ulong	base;
 		ulong	size;
 	} base[6];
 	ulong	_pad4[PAD(0x72280, 0x7222c)];
@@ -642,3 +645,53 @@ struct XorReg
 	ulong	pad7[3];
 	ulong	blocksize;	/* 0x60ac0 */
 };
+
+#define SDRAMCREG	((SDramcReg*)AddrSDramc)
+typedef struct SDramacReg SDramcReg;
+struct SDramcReg
+{
+	ulong ctl;
+	ulong ddrctllo;
+	struct {
+		ulong lo;
+		ulong hi;
+	} time;
+	ulong addrctl;
+	ulong opagectl;
+	ulong oper;
+	ulong mode;
+	ulong extmode;
+	ulong ddrctlhi;
+	ulong ddr2timelo;
+	ulong operctl;
+	struct {
+		ulong lo;
+		ulong hi;
+	} mbusctl;
+	ulong mbustimeout;
+	ulong ddrtimehi;
+	ulong sdinitctl;
+	ulong extsdmode1;
+	ulong extsdmode2;
+	struct {
+		ulong lo;
+		ulong hi;
+	} odtctl;
+	ulong ddrodtctl;
+	ulong rbuffsel;
+
+	ulong accalib;
+	ulong dqcalib;
+	ulong dqscalib;
+};
+
+#define SDRAMDREG	((SDramdReg*)AddrSDramd)
+typedef struct SDramdReg SDramdReg;
+struct SDramdReg
+{
+	struct	{
+		ulong	base;
+		ulong	size;
+	} win[4];
+};
+

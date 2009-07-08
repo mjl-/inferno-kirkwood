@@ -58,3 +58,9 @@ void	xordma(uchar *dst, uchar **src, int nsrc, ulong n);
 ulong	tcmstat(void);
 ulong	rcpctl(void);
 ulong	wcpctl(ulong);
+
+void	dcflush(void*, ulong);
+void	dcflushall(void);
+void	icflush(void*, ulong);
+void	icflushall(void);
+int	segflush(void*, ulong);

@@ -6,6 +6,16 @@ http://openplug.org/plugforum/index.php?action=forum
 http://www.marvell.com/products/embedded_processors/developer/kirkwood/sheevaplug.jsp
 http://www.marvell.com/products/embedded_processors/kirkwood/index.jsp
 
+# arm926ejs cpu
+http://infocenter.arm.com/help/topic/com.arm.doc.ddi0198e/DDI0198E_arm926ejs_r0p5_trm.pdf
+http://www.marvell.com/files/products/embedded_processors/developer/kirkwood/SheevaPlug_U-Boot.zip
+
+# usb specs
+http://www.lammertbies.nl/comm/info/usb-specification.html
+
+# nand
+http://www.google.es/search?q=Hynix+HY27UF084G2M
+
 # u-boot
 http://www.denx.de/wiki/DULG/Manual
 

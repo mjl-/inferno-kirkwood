@@ -71,7 +71,7 @@
 #define CpDAC		3		/* R/W: domain access control */
 #define CpFSR		5		/* R/W: fault status */
 #define CpFAR		6		/* R/W: fault address */
-#define	CpPower		7		/* W: Power Commands */
+#define	CpCacheCtl	7		/* W: */
 #define CpTLBops	8		/* W: TLB operations */
 #define	CpTCM		9		/* R/W: Tightly Coupled Memory */
 #define CpTLBLk		10		/* W: TLB lock down */
