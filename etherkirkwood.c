@@ -8,7 +8,7 @@
 #include	"../port/netif.h"
 
 #include	"etherif.h"
-
+#include	"../port/ethermii.h"
 
 /*
  * todo:
@@ -76,6 +76,9 @@ struct Ctlr
 	Block	*txb[Ntx];
 	int	txhead;		/* next descr we can use for new packet */
 	int	txtail;		/* next descr to reclaim on tx complete */
+
+	Mii	*mii;
+	int	port;
 
 	/* stats */
 	ulong	intrs;
@@ -691,6 +694,247 @@ ctl(Ether *e, void *p, long n)
 	return n;
 }
 
+enum
+{
+	/* SMI regs */
+	PhySmiTimeout	= 10000,
+	PhySmiDataOff	= 0,				// Data
+	PhySmiDataMsk	= 0xffff<<PhySmiDataOff,
+		
+	PhySmiAddrOff 	= 16,				// PHY device addr
+	PhySmiAddrMsk	= 0x1f << PhySmiAddrOff,
+
+	PhySmiOpcode	= 26,
+	PhySmiOpcodeMsk	= 3<<PhySmiOpcode,
+	PhySmiOpcodeWr	= 0<<PhySmiOpcode,
+	PhySmiOpcodeRd	= 1<<PhySmiOpcode,
+	
+	PhySmiReadValid	= 1<<27,
+	PhySmiBusy		= 1<<28,
+	
+	SmiRegAddrOff	= 21,				// PHY device register addr
+	SmiRegAddrMsk	= 0x1f << SmiRegAddrOff,
+	
+};
+
+static int
+smibusywait(GbeReg *reg)
+{
+	ulong timeout, smi_reg;
+	
+	timeout = PhySmiTimeout;
+	/* wait till the SMI is not busy */
+	do {
+		/* read smi register */
+		smi_reg = reg->smi;
+		if (timeout-- == 0) {
+			print("SMI busy timeout\n");
+			return -1;
+		}
+	} while (smi_reg & PhySmiBusy);
+	return 0;
+}
+
+static int
+miird(Mii *mii, int pa, int ra)
+{
+	Ctlr *ctlr;
+	GbeReg *reg;
+	ulong smi_reg;
+	ulong timeout;
+
+	ctlr = (Ctlr*)mii->ctlr;
+	reg = ctlr->reg;
+	
+	// check to read params
+	if (pa == 0xEE && ra == 0xEE)
+		return reg->phy & 0x00ff;
+
+	// check params
+	if (pa<<PhySmiAddrOff & ~PhySmiAddrMsk)
+		return -1;
+	if (ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
+		return -1;
+	
+	smibusywait(reg);
+
+	/* fill the phy address and regiser offset and read opcode */
+	smi_reg = (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff) | PhySmiOpcodeRd;
+	reg->smi = smi_reg;
+	
+	/*wait till readed value is ready */
+	timeout = PhySmiTimeout;
+	do {
+		/* read smi register */
+		smi_reg = reg->smi;
+		if (timeout-- == 0) {
+			print("SMI read-valid timeout\n");
+			return -1;
+		}
+	} while (!(smi_reg & PhySmiReadValid));
+	
+	/* Wait for the data to update in the SMI register */
+	for (timeout = 0; timeout < PhySmiTimeout; timeout++) ;
+	
+	return reg->smi & PhySmiDataMsk;
+}
+
+static int
+miiwr(Mii *mii, int pa, int ra, int v)
+{
+	Ctlr *ctlr;
+	GbeReg *reg;
+	ulong smi_reg;
+
+	ctlr = (Ctlr*)mii->ctlr;
+	reg = ctlr->reg;
+	
+	// check params
+	if (pa<<PhySmiAddrOff & ~PhySmiAddrMsk)
+		return -1;
+	if (ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
+		return -1;
+	
+	smibusywait(reg);
+	
+	/* fill the phy address and regiser offset and read opcode */
+	smi_reg = v<<PhySmiDataOff;
+	smi_reg |= (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff);
+	smi_reg &= ~ PhySmiOpcodeRd;
+
+	reg->smi = smi_reg;
+	
+	return 0;
+}
+
+static int
+kirkwoodmii(Ctlr *ctlr)
+{
+	MiiPhy *phy;
+	int i;
+
+	if((ctlr->mii = malloc(sizeof(Mii))) == nil)
+		return -1;
+	ctlr->mii->ctlr = ctlr;
+	ctlr->mii->mir = miird;
+	ctlr->mii->miw = miiwr;
+	
+	if(mii(ctlr->mii, ~0) == 0 || (phy = ctlr->mii->curphy) == nil){
+		free(ctlr->mii);
+		ctlr->mii = nil;
+		iprint("etherkirkwood: init mii failure\n");
+		return -1;
+	}
+
+	iprint("oui %X phyno %d\n", phy->oui, phy->phyno);
+	if(miistatus(ctlr->mii) < 0){
+
+		miireset(ctlr->mii);
+		print("miireset\n");
+		if(miiane(ctlr->mii, ~0, 0, ~0) < 0){
+			iprint("miiane failed\n");
+			return -1;
+		}
+		print("miistatus...\n");
+		miistatus(ctlr->mii);
+		if(miird(ctlr->mii, phy->phyno, Bmsr) & BmsrLs){
+			for(i=0;; i++){
+				if(i > 600){
+					iprint("emac%d: autonegotiation failed\n", ctlr->port);
+					break;
+				}
+				if(miird(ctlr->mii, phy->phyno, Bmsr) & BmsrAnc)
+					break;
+				delay(10);
+			}
+			if(miistatus(ctlr->mii) < 0)
+				iprint("miistatus failed\n");
+		}else{
+			iprint("emac%d: no link\n", ctlr->port);
+			phy->speed = 10;	/* simple default */
+		}
+	}
+
+	iprint("kirkwood%d mii: fd=%d speed=%d tfc=%d rfc=%d\n", ctlr->port, phy->fd, phy->speed, phy->tfc, phy->rfc);
+
+	print("mii done\n");
+
+	return 0;
+}
+
+static int
+miiphyinit(Mii *mii)
+{
+	ulong reg;
+	ulong devadr;
+
+	// select mii phy
+	devadr = miird(mii, 0xEE, 0xEE);
+	print("devadr %lux\n", devadr);
+	if (devadr == -1) {
+		print("Error..could not read PHY dev address\n");
+		return -1;
+	}
+
+	// leds link & activity
+	miiwr(mii, devadr, 22, 0x3);
+	reg = miird(mii, devadr, 10);
+	reg &= ~0xf;
+	reg |= 0x1;
+	miiwr(mii, devadr, 10, reg);
+	miiwr(mii, devadr, 22, 0);
+
+	// enable RGMII delay on Tx and Rx for CPU port
+	miiwr(mii, devadr, 22, 2);
+	reg = miird(mii, devadr, 21);
+	reg |= (1<<5) | (1<<4);
+	miiwr(mii, devadr, 21, reg);
+	miiwr(mii, devadr, 22, 0);
+	return 0;
+}
+
+static void
+portreset(GbeReg *reg)
+{	
+	ulong v, i;
+	
+	/* Stop Tx port activity. Check port Tx activity. */
+	v = reg->tqc;
+
+	if (v & 0xFF) {
+		/* Issue stop command for active channels only */
+		reg->tqc = v << 8;
+
+		/* Wait for all Tx activity to terminate. */
+		do {
+			/* Check port cause register that all Tx queues are stopped */
+			v = reg->tqc;
+		} while (v & 0xFF);
+	}
+
+	/* Stop Rx port activity. Check port Rx activity. */
+	v = reg->rqc;
+
+	if (v & 0xFF) {
+		/* Issue stop command for active channels only */
+		reg->rqc = v << 8;
+
+		/* Wait for all Rx activity to terminate. */
+		do {
+			/* Check port cause register that all Rx queues are stopped */
+			v = reg->rqc;
+		} while (v & 0xFF);
+	}
+
+	/* Enable port in the Configuration Register */
+	reg->psc0 &= ~1;
+	/* Set port of active in the Configuration Register */
+	reg->psc1 &= ~(1 << 4);
+	/* Set MMI interface up */
+	reg->psc1 &= ~(1 << 3);
+	for (i = 0; i < 4000; i++) ;
+	return;
+}
 
 static void
 ctlrinit(Ether *e)
@@ -743,7 +987,7 @@ ctlrinit(Ether *e)
 	}
 	ctlr->txtail = 0;
 	ctlr->txhead = 0;
-
+	
 	/* clear stats by reading them into fake ctlr */
 	getmibstats(&fakectlr);
 
@@ -802,6 +1046,18 @@ reset(Ether *e)
 	default:
 		panic("bad ether ctlr\n");
 	}
+
+	portreset(ctlr->reg);
+	
+	/* Set phy address of the port, see archether */
+	ctlr->port = e->ctlrno;
+	ctlr->reg->phy = e->ctlrno;
+	
+	if(kirkwoodmii(ctlr) < 0){
+		free(ctlr);
+		return -1;
+	}
+	//miiphyinit(ctlr->mii);
 
 	/* xxx should probably not do this.  can hostowner set mtu, overriding us? */
 	if(e->maxmtu > Rxblocklen-2)

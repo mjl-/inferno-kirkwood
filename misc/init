@@ -1,0 +1,28 @@
+#!/dis/sh.dis
+load std
+autoload=(std)
+
+bind -a '#o' /dev	# sdio
+bind -a '#φ' /dev	# efuse
+bind -a '#T' /dev	# sheeva
+bind -a '#B' /dev	# boot
+
+echo static | run /netrc
+
+mount {mntgen} /n
+memfs /tmp
+
+echo debug off > /dev/sdioctl
+echo init > /dev/sdioctl
+cat /dev/sdioctl
+
+dossrv  -f /dev/sdiodata -m /n/dos
+unmount /n/dos
+
+#mount -A -v net!$ipgw!styx /n/remote
+
+while {} {
+	echo shell...
+	sh -i
+	echo
+}

@@ -49,22 +49,46 @@ p32(uchar *p, ulong v)
 	USED(p);
 }
 
+static void
+archetheraddr(Ether *e, GbeReg *reg, int queue)
+{
+	ulong uc_nibble, unicast_reg;
+	ulong tbl_off, reg_off;
+
+	// TODO could get/set getconf("ethaddr")
+
+	// set ea
+	p32(e->ea, reg->macah);
+	p16(e->ea+4, reg->macal);
+
+	// accept frames on ea
+	uc_nibble = e->ea[5];
+	uc_nibble = 0xf & uc_nibble;
+	tbl_off = uc_nibble / 4;
+	reg_off = uc_nibble % 4;
+	
+	unicast_reg = reg->dfut[tbl_off];
+	unicast_reg &= 0xff << (8 * reg_off);
+	unicast_reg |= (0x01 | queue <<1) << (8*reg_off);
+	reg->dfut[tbl_off] = unicast_reg;
+}		
+
 int
 archether(int ctlrno, Ether *e)
 {
 	GbeReg* reg;
 
+	
 	switch(ctlrno) {
 	case 0:
-		reg = GBE0REG;
 		strcpy(e->type, "kirkwood");
 		e->ctlrno = ctlrno;
 		e->itype = Irqlo;
 		e->irq = IRQ0gbe0sum;
-		p32(e->ea, reg->macah);
-		p16(e->ea+4, reg->macal);
 		e->nopt = 0;
 		e->mbps = 1000;
+		
+		archetheraddr(e, GBE0REG, 0);
 		return 1;
 	}
 	return -1;

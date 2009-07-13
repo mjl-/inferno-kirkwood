@@ -1,3 +1,7 @@
+#
+# sheeva
+#
+
 implement Init;
 
 include "sys.m";
@@ -11,34 +15,61 @@ Init: module
 	init:	fn();
 };
 
+
+#
+# initialise flash translation
+# mount flash file system
+# add devices
+# start a shell or window manager
+#
+
 init()
 {
 	sys = load Sys Sys->PATH;
 	
 	sys->print("sheevainit...\n");
 
-	sys->bind("#c", "/dev", sys->MREPL);		# console
-	sys->bind("#t", "/dev", sys->MAFTER);		# serial port
-	sys->bind("#r", "/dev", sys->MAFTER);		# rtc
-	sys->bind("#C", "/dev", Sys->MAFTER);		# crypto
-	sys->bind("#o", "/dev", Sys->MAFTER);		# sdio
-	sys->bind("#φ", "/dev", Sys->MAFTER);		# efuse
-	sys->bind("#T", "/dev", Sys->MAFTER);		# sheeva
-	sys->bind("#p", "/prog", sys->MREPL);
-	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
-	sys->bind("#d", "/fd", Sys->MREPL);
-	sys->bind("#I", "/net", Sys->MREPL);
-	sys->bind("#l", "/net", Sys->MAFTER);
+	dobind("#I", "/net", Sys->MREPL);		# IP
+	dobind("#l", "/net", Sys->MAFTER);		# ether
+	dobind("#c", "/dev", sys->MREPL);		# console
+	dobind("#t", "/dev", sys->MAFTER);		# serial line
+	dobind("#r", "/dev", sys->MAFTER);		# rtc
+	dobind("#p", "/prog", sys->MREPL);
+	dobind("#e", "/env", sys->MREPL|sys->MCREATE);
+	dobind("#d", "/fd", Sys->MREPL);
 
-	rtc();
+	setclock("#r/rtc");
 
-	sh := load Sh "/dis/sh.dis";
-	sh->init(nil, list of {"sh", "-c", "run /init"});
+	setsysname("sheeva");
+
+	start("sh", "-c" :: "run /init" :: nil);
 }
 
-rtc()
+#
+# Set system name from nvram if possible
+#
+setsysname(def: string)
 {
-	fd := sys->open("/dev/rtc", Sys->OREAD);
+	v := array of byte def;
+	fd := sys->open("/nvfs/ID", sys->OREAD);
+	if(fd == nil)
+		fd = sys->open("/env/sysname", sys->OREAD);
+	if(fd != nil){
+		buf := array[Sys->NAMEMAX] of byte;
+		nr := sys->read(fd, buf, len buf);
+		while(nr > 0 && buf[nr-1] == byte '\n')
+			nr--;
+		if(nr > 0)
+			v = buf[0:nr];
+	}
+	fd = sys->open("/dev/sysname", sys->OWRITE);
+	if(fd != nil)
+		sys->write(fd, v, len v);
+}
+
+setclock(file: string)
+{
+	fd := sys->open(file, Sys->OREAD);
 	if(fd == nil)
 		return warn(sprint("rtc: %r"));
 	n := sys->read(fd, buf := array[20] of byte, len buf);
@@ -49,6 +80,28 @@ rtc()
 		return warn(sprint("time: %r"));
 	if(sys->fprint(tmfd, "%bd", big 1000000*big string buf[:n]) < 0)
 		return warn(sprint("writing /dev/time: %r"));
+}
+
+start(cmd: string, args: list of string)
+{
+	disfile := cmd;
+	if(disfile[0] != '/')
+		disfile = "/dis/"+disfile+".dis";
+	(ok, nil) := sys->stat(disfile);
+	if(ok >= 0){
+		dis := load Command disfile;
+		if(dis == nil)
+			sys->print("init: can't load %s: %r\n", disfile);
+		else
+			spawn dis->init(nil, cmd :: args);
+	}
+}
+
+dobind(f, t: string, flags: int): int
+{
+	if((ret := sys->bind(f, t, flags)) < 0)
+		warn(sys->sprint("can't bind %s on %s: %r", f, t));
+	return ret;
 }
 
 warn(s: string)

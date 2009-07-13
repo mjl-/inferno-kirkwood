@@ -1,11 +1,48 @@
-echo -n network...
-x=`{cat /net/ipifc/clone}
-echo bind ether /net/ether0 >/net/ipifc/$x/ctl
-ip/dhcp /net/ipifc/$x
+echo network [static/dynamic]?
+
+ip=192.168.12.11
+ipmask=255.255.255.0
+ipgw=192.168.12.12
+sys=`{cat /dev/sysname}
+dom=local
+auth=''
+fs=''
+dns=''
+
+nettype=`{read}
+if{~ $nettype static}{
+	x=`{cat /net/ipifc/clone}
+	echo bind ether ether0 > /net/ipifc/$x/ctl
+
+	echo add $ip $ipmask > /net/ipifc/$x/ctl
+	echo add 0 0 $ipgw > /net/iproute
+	
+	ip/ping -a -n 4 $ipgw
+	cat /net/ether0/ifstats
+
+	echo done
+}{~ $nettype dynamic}{
+	x=`{cat /net/ipifc/clone}
+	echo bind ether ether0 > /net/ipifc/$x/ctl
+
+	ip/dhcp /net/ipifc/$x
+
+	echo done
+}{
+	echo failed
+}
+
+{
+	echo 'ip='$ip 'ipmask='$ipmask 'ipgw='$ipgw
+	echo '	sys='$sys
+	echo '	dom='$sys.$dom
+	echo '	auth='$auth
+	echo '	fs='$fs
+	echo '	dns='$dns
+} >/net/ndb
+
 ndb/cs
 ndb/dns -r &
-echo
 
-echo -n listen telnet...
-listen -A net!*!telnet {sh -i >[2=1]} &
-echo
+#echo -n listen telnet...
+#listen -A net!*!telnet {sh -i >[2=1]} &

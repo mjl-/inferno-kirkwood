@@ -10,6 +10,8 @@ enum{
 	Qdir,
 	Qmem,
 	Qregs,
+
+	Qdelay, // test
 };
 
 static
@@ -17,6 +19,7 @@ Dirtab sheevatab[]={
 	".",			{Qdir, 0, QTDIR},	0,	0555,
 	"sheevamem",		{Qmem, 0},		0,	0600,
 	"sheevaregs",		{Qregs, 0},		0,	0600,
+	"sheevadelay",		{Qdelay, 0},		0,	0600,
 };
 
 static Chan*
@@ -100,6 +103,10 @@ sheevawrite(Chan* c, void* a, long n, vlong offset)
 		v |= p[2]<<16;
 		v |= p[3]<<24;
 		*(ulong*)offset = v;
+		break;
+	case Qdelay:
+		v = atoi(a);
+		delay(v);
 		break;
 	default:
 		error(Ebadusefd);

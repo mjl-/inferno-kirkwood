@@ -421,14 +421,14 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 
 	if(cmd == 17 || cmd == 18) {
 		/* wait for dma interrupt that signals completion */
-		tsleep(&dmar, dmafinished, nil, 250);
+//		tsleep(&dmar, dmafinished, nil, 250);
 
 		need = NScmdcomplete|NSdmaintr;
 		if((reg->status & need) != need || (reg->status & (NSerror|NSunexpresp)) != 0) {
 			printstatus("dma err: ", reg->status, reg->errstatus);
-			return SDError;
+//			return SDError;
 		}
-	} else {
+	} /*else*/ {
 		/* poll for completion/error */
 		need = NScmdcomplete;
 		i = 0;
@@ -692,7 +692,7 @@ sdinit(void)
 	ulong v;
 	SdioReg *reg = SDIOREG;
 
-	sdclock(400*1000);
+	//sdclock(400*1000);
 	reg->hostctl &= ~HChighspeed;
 
 	/* force card to idle state */
@@ -777,7 +777,9 @@ sdinit(void)
 		errorsd("bad csd register");
 
 	if(card.csd.version == 0) {
-		card.bs = 1<<card.csd.readblocklength;
+//		card.bs = 1<<card.csd.readblocklength;
+		card.bs = 512;
+
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
 		card.size *= 1<<card.csd.readblocklength;
@@ -792,14 +794,6 @@ sdinit(void)
 		kprint("csd1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
-	if(card.sdhc) {
-		dprint("enabling sdhc & setting clock to 50mhz\n");
-		sdclock(50*1000*1000);
-		reg->hostctl |= HChighspeed;
-	} else {
-		dprint("leaving sdhc off & setting clock to 25mhz\n");
-		sdclock(25*1000*1000);
-	}
 
 	if(sdcmd(&card, 7, card.rca<<16) < 0)
 		errorsd("selecting card");
@@ -840,6 +834,7 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 
 	/* xxx for some reason i couldn't discover, using "a" directly causes corruption and makes the alloc routines panic in freetype/freeptrs...  i've check with a larger buffer, there doesn't seemt to be corruption before/after the buffer... */
 	buf = smalloc(n);
+	
 	if(waserror()) {
 		free(buf);
 		nexterror();
@@ -904,9 +899,9 @@ sdioreset(void)
 	SdioReg *reg = SDIOREG;
 
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
-	reg->statusirqmask = 0;
-	reg->errstatusirqmask = 0;
-	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
+//	reg->statusirqmask = 0;
+//	reg->errstatusirqmask = 0;
+//	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
 static void
@@ -916,11 +911,12 @@ sdioinit(void)
 
 	card.valid = 0;
 
+	/* reset the bus, forcing all cards to idle state */
 	reg->swreset = SRresetall;
 	tsleep(&up->sleep, return0, nil, 50);
 
-	/* reset the bus, forcing all cards to idle state */
-	sdclock(25*1000*1000);
+	/* commented as it makes reads fail with: "reading, error for cmd 18" */
+	//sdclock(25*1000*1000);
 
 	/* configure host controller */
 	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15); // xxx HCtimeoutenable;

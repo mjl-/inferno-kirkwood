@@ -17,7 +17,7 @@ extern int cflag;
 extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
-ulong cpuidlecount;
+extern int panicreset;
 
 enum {
 	MAXCONF	= 32,
@@ -49,7 +49,7 @@ getconf(char *name)
 }
 
 /*
- * parse linux boot parameters.
+ * parse u-boot parameters.
  * typically starting at 0x100, consisting of size,tag,data triplets.
  * size & tag are 4-byte words.  size is in 4-byte words,
  * including the two words for size,tag header.
@@ -62,6 +62,7 @@ enum {
 	Atagnone	= 0x00000000,
 	Atagmax		= 4*1024,	/* parameters are supposed to be in first 16kb memory */
 };
+
 static void
 options(void)
 {
@@ -269,7 +270,7 @@ exit(int inpanic)
 
 	chandevshutdown();
 
-	if(inpanic && 0){
+	if(inpanic && !panicreset){
 		print("Hit the reset button\n");
 		for(;;)
 			clockpoll();
@@ -292,8 +293,8 @@ linkproc(void)
 int
 segflush(void *a, ulong n)
 {
-	//dcflushall(); 
-	//icflushall(); 
+	dcflushall(); 
+	icflushall(); 
 
 	//dcflush(a, n);
 	//icflush(a, n);
