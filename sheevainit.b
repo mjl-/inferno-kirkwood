@@ -45,20 +45,13 @@ init()
 	start("sh", "-c" :: "run /init" :: nil);
 }
 
-#
-# Set system name from nvram if possible
-#
 setsysname(def: string)
 {
 	v := array of byte def;
-	fd := sys->open("/nvfs/ID", sys->OREAD);
-	if(fd == nil)
-		fd = sys->open("/env/sysname", sys->OREAD);
+	fd := sys->open("/env/sysname", sys->OREAD);
 	if(fd != nil){
 		buf := array[Sys->NAMEMAX] of byte;
 		nr := sys->read(fd, buf, len buf);
-		while(nr > 0 && buf[nr-1] == byte '\n')
-			nr--;
 		if(nr > 0)
 			v = buf[0:nr];
 	}
@@ -71,10 +64,10 @@ setclock(file: string)
 {
 	fd := sys->open(file, Sys->OREAD);
 	if(fd == nil)
-		return warn(sprint("rtc: %r"));
+		return warn(sprint("%s: %r", file));
 	n := sys->read(fd, buf := array[20] of byte, len buf);
 	if(n <= 0)
-		return warn(sprint("rtc: %r"));
+		return warn(sprint("%s: %r", file));
 	tmfd := sys->open("/dev/time", Sys->OWRITE);
 	if(tmfd == nil)
 		return warn(sprint("time: %r"));

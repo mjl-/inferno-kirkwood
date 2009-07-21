@@ -19,8 +19,6 @@ cat /dev/sdioctl
 dossrv  -f /dev/sdiodata -m /n/dos
 unmount /n/dos
 
-#mount -A -v net!$ipgw!styx /n/remote
-
 while {} {
 	echo shell...
 	sh -i

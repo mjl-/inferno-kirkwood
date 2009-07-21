@@ -3,6 +3,7 @@
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
+#include "io.h"
 #include "../port/error.h"
 
 
@@ -21,6 +22,36 @@ Dirtab sheevatab[]={
 	"sheevaregs",		{Qregs, 0},		0,	0600,
 	"sheevadelay",		{Qdelay, 0},		0,	0600,
 };
+
+/* 
+ watchdog to detect hangs/halts and reset system.
+
+ watchdogproc: periodically updates watchdog register,
+ note that updates must happen before wdog checks.
+*/
+
+static void
+watchdogproc(void*)
+{
+	int checkms = 10*1000;
+	int updatems = (checkms - (checkms * 5)/100);
+
+	//iprint("watchdogproc enabled update %ld\n", checkms);
+
+	TIMERREG->ctl |= TmrWDenable;
+	CPUCSREG->rstout |= RstoutWatchdog;
+
+	for(;;){
+		TIMERREG->timerwd = MS2TMR(checkms);
+		tsleep(&up->sleep, return0, nil, updatems);
+	}
+}
+
+static void
+sheevainit(void)
+{
+	kproc("watchdog", watchdogproc, nil, 0);
+}
 
 static Chan*
 sheevaattach(char* spec)
@@ -119,7 +150,7 @@ Dev sheevadevtab = {
 	"sheeva",
 
 	devreset,
-	devinit,
+	sheevainit,
 	devshutdown,
 	sheevaattach,
 	sheevawalk,

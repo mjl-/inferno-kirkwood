@@ -10,6 +10,8 @@
 #include	"etherif.h"
 #include	"../port/ethermii.h"
 
+#define	MIIDBG	if(0)iprint
+
 /*
  * todo:
  * - properly make sure preconditions hold (e.g. being idle) when performing some of the operations (enabling port or queue).
@@ -728,7 +730,7 @@ smibusywait(GbeReg *reg)
 		/* read smi register */
 		smi_reg = reg->smi;
 		if (timeout-- == 0) {
-			print("SMI busy timeout\n");
+			MIIDBG("SMI busy timeout\n");
 			return -1;
 		}
 	} while (smi_reg & PhySmiBusy);
@@ -768,13 +770,14 @@ miird(Mii *mii, int pa, int ra)
 		/* read smi register */
 		smi_reg = reg->smi;
 		if (timeout-- == 0) {
-			print("SMI read-valid timeout\n");
+			MIIDBG("SMI read-valid timeout\n");
 			return -1;
 		}
 	} while (!(smi_reg & PhySmiReadValid));
 	
 	/* Wait for the data to update in the SMI register */
-	for (timeout = 0; timeout < PhySmiTimeout; timeout++) ;
+	for (timeout = 0; timeout < PhySmiTimeout; timeout++)
+	{}
 	
 	return reg->smi & PhySmiDataMsk;
 }
@@ -813,6 +816,7 @@ kirkwoodmii(Ctlr *ctlr)
 	MiiPhy *phy;
 	int i;
 
+	MIIDBG("mii\n");
 	if((ctlr->mii = malloc(sizeof(Mii))) == nil)
 		return -1;
 	ctlr->mii->ctlr = ctlr;
@@ -826,21 +830,21 @@ kirkwoodmii(Ctlr *ctlr)
 		return -1;
 	}
 
-	iprint("oui %X phyno %d\n", phy->oui, phy->phyno);
+	MIIDBG("oui %X phyno %d\n", phy->oui, phy->phyno);
 	if(miistatus(ctlr->mii) < 0){
 
 		miireset(ctlr->mii);
-		print("miireset\n");
+		MIIDBG("miireset\n");
 		if(miiane(ctlr->mii, ~0, 0, ~0) < 0){
 			iprint("miiane failed\n");
 			return -1;
 		}
-		print("miistatus...\n");
+		MIIDBG("miistatus\n");
 		miistatus(ctlr->mii);
 		if(miird(ctlr->mii, phy->phyno, Bmsr) & BmsrLs){
 			for(i=0;; i++){
 				if(i > 600){
-					iprint("emac%d: autonegotiation failed\n", ctlr->port);
+					iprint("kirkwood%d: autonegotiation failed\n", ctlr->port);
 					break;
 				}
 				if(miird(ctlr->mii, phy->phyno, Bmsr) & BmsrAnc)
@@ -850,14 +854,14 @@ kirkwoodmii(Ctlr *ctlr)
 			if(miistatus(ctlr->mii) < 0)
 				iprint("miistatus failed\n");
 		}else{
-			iprint("emac%d: no link\n", ctlr->port);
+			iprint("kirkwood%d: no link\n", ctlr->port);
 			phy->speed = 10;	/* simple default */
 		}
 	}
 
 	iprint("kirkwood%d mii: fd=%d speed=%d tfc=%d rfc=%d\n", ctlr->port, phy->fd, phy->speed, phy->tfc, phy->rfc);
 
-	print("mii done\n");
+	MIIDBG("mii done\n");
 
 	return 0;
 }

@@ -44,5 +44,7 @@ if{~ $nettype static}{
 ndb/cs
 ndb/dns -r &
 
+mount -A -v net!$ipgw!styx /n/remote &
+
 #echo -n listen telnet...
 #listen -A net!*!telnet {sh -i >[2=1]} &

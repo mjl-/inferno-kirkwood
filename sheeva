@@ -89,7 +89,7 @@ code
 
 	int consoleprint = 1;
 	char debug_keys = 1;
-	int panicreset = 1;
+	char panicreset = 1;
 
 init
 	sheevainit
@@ -150,6 +150,7 @@ root
 	/dis/memfs.dis
 	/dis/mntgen.dis
 	/dis/read.dis
+	/dis/sed.dis
 	/dis/sha1sum.dis
 	/dis/sleep.dis
 	/dis/styxlisten.dis
@@ -204,3 +205,4 @@ root
 
 	/init	/os/kirkwood/misc/init
 	/netrc	/os/kirkwood/misc/netrc
+	/kexec	/os/kirkwood/misc/kexec

@@ -52,8 +52,8 @@ p32(uchar *p, ulong v)
 static void
 archetheraddr(Ether *e, GbeReg *reg, int queue)
 {
-	ulong uc_nibble, unicast_reg;
-	ulong tbl_off, reg_off;
+	ulong nibble, ucreg;
+	ulong tbloff, regoff;
 
 	// TODO could get/set getconf("ethaddr")
 
@@ -62,15 +62,14 @@ archetheraddr(Ether *e, GbeReg *reg, int queue)
 	p16(e->ea+4, reg->macal);
 
 	// accept frames on ea
-	uc_nibble = e->ea[5];
-	uc_nibble = 0xf & uc_nibble;
-	tbl_off = uc_nibble / 4;
-	reg_off = uc_nibble % 4;
+	nibble = e->ea[5] & 0xf;
+	tbloff = nibble / 4;
+	regoff = nibble % 4;
 	
-	unicast_reg = reg->dfut[tbl_off];
-	unicast_reg &= 0xff << (8 * reg_off);
-	unicast_reg |= (0x01 | queue <<1) << (8*reg_off);
-	reg->dfut[tbl_off] = unicast_reg;
+	ucreg = reg->dfut[tbloff];
+	ucreg &= 0xff << (8 * regoff);
+	ucreg |= (0x01 | queue <<1) << (8*regoff);
+	reg->dfut[tbloff] = ucreg;
 }		
 
 int
@@ -92,15 +91,6 @@ archether(int ctlrno, Ether *e)
 		return 1;
 	}
 	return -1;
-}
-
-static int watchdoghz = 0; // enable with 1 (hz)
-
-static void
-wdogclock(void)
-{
-	/* update watchdog */
-	TIMERREG->timerwd = CLOCKFREQ/watchdoghz;
 }
 
 /* LED/USB gpios */
@@ -128,13 +118,6 @@ archreset(void)
 {
 	/* reset devices to initial state */
 	gpioconf(SheevaOEValLow, SheevaOEValHigh, SheevaOELow, SheevaOEHigh);
-
-	if(watchdoghz){
-		addclock0link(wdogclock, watchdoghz);
-		TIMERREG->timerwd = CLOCKFREQ/watchdoghz;
-		TIMERREG->ctl |= TmrWDenable;
-		CPUCSREG->rstout |= RstoutWatchdog;
-	}
 }
 
 void
