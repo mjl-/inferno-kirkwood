@@ -904,7 +904,6 @@ portreset(GbeReg *reg)
 	
 	/* Stop Tx port activity. Check port Tx activity. */
 	v = reg->tqc;
-
 	if (v & 0xFF) {
 		/* Issue stop command for active channels only */
 		reg->tqc = v << 8;
@@ -918,7 +917,6 @@ portreset(GbeReg *reg)
 
 	/* Stop Rx port activity. Check port Rx activity. */
 	v = reg->rqc;
-
 	if (v & 0xFF) {
 		/* Issue stop command for active channels only */
 		reg->rqc = v << 8;
@@ -936,8 +934,8 @@ portreset(GbeReg *reg)
 	reg->psc1 &= ~(1 << 4);
 	/* Set MMI interface up */
 	reg->psc1 &= ~(1 << 3);
-	for (i = 0; i < 4000; i++) ;
-	return;
+	for (i = 0; i < 4000; i++)
+	{}
 }
 
 static void
@@ -956,7 +954,7 @@ ctlrinit(Ether *e)
 		for(i = 0; i < Nrxblocks; i++) {
 			b = iallocb(Rxblocklen+Bufalign-1);
 			if(b == nil) {
-				print("out of memory for rx ring\n");
+				print("no memory for rxring\n");
 				break;
 			}
 			b->free = rxfreeb;
@@ -1016,11 +1014,16 @@ ctlrinit(Ether *e)
 	reg->tcqdp[0] = (ulong)&ctlr->tx[ctlr->txhead];
 
 	reg->crdp[0].r = (ulong)&ctlr->rx[ctlr->rxhead];
+	archetheraddr(e, reg, 0);
+
 	reg->rqc = Rxqenable(0);
 	reg->psc1 = PSC1rgmii|PSC1encolonbp|PSC1coldomainlimit(0x23);
 	reg->psc0 = PSC0portenable|PSC0autonegflowcontroldisable|PSC0autonegpauseadv|PSC0noforcelinkdown|PSC0mru(PSC0mru1522);
 
 	e->link = (reg->ps0 & PS0linkup) != 0;
+	
+	/* set ethernet MTU for leaky bucket mechanism to 0 (disabled) */
+	reg->pmtu = 0;
 }
 
 static void

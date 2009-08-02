@@ -1,0 +1,39 @@
+diff --git a/appl/cmd/mdb.b b/appl/cmd/mdb.b
+index 9dd721d..d2ed09e 100644
+--- a/appl/cmd/mdb.b
++++ b/appl/cmd/mdb.b
+@@ -311,7 +311,7 @@ usage()
+ 	raise "fail:usage";
+ }
+ 
+-writeable := 0;
++writeperms := 0;
+ 
+ init(nil: ref Draw->Context, argv: list of string)
+ {
+@@ -335,9 +335,12 @@ init(nil: ref Draw->Context, argv: list of string)
+ 	if (argv != nil)
+ 		argv = tl argv;
+ 	if (argv != nil && len hd argv && (hd argv)[0] == '-') {
+-		if (hd argv != "-w")
++		if (hd argv == "-w")
++			writeperms = Sys->ORDWR;
++		if (hd argv == "-wo")
++			writeperms = Sys->OWRITE;
++		else
+ 			usage();
+-		writeable = 1;
+ 		argv = tl argv;
+ 	}
+ 	if (argv == nil)
+@@ -349,8 +352,8 @@ init(nil: ref Draw->Context, argv: list of string)
+ 		cmd = hd argv;
+ 
+ 	oflags := Sys->OREAD;
+-	if (writeable)
+-		oflags = Sys->ORDWR;
++	if (writeperms)
++		oflags = writeperms;
+ 	mfd = sys->open(fname, oflags);
+ 	if(mfd == nil) {
+ 		sys->fprint(stderr, "mdb: cannot open %s: %r\n", fname);

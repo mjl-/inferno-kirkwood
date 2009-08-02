@@ -1,0 +1,4 @@
+.hgignore
+doc/.*\.pdf
+doc/.*\.zip
+guide.*

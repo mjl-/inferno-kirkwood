@@ -18,7 +18,6 @@ if{~ $nettype static}{
 	echo add 0 0 $ipgw > /net/iproute
 	
 	ip/ping -a -n 4 $ipgw
-	cat /net/ether0/ifstats
 
 	echo done
 }{~ $nettype dynamic}{

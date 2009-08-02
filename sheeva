@@ -81,10 +81,9 @@ port
 	xalloc
 
 code
-	int kernel_pool_pcnt = 10;
-	int main_pool_pcnt = 33;
-	int heap_pool_pcnt = 34;
-	int image_pool_pcnt = 33;
+	int main_pool_pcnt = 50;
+	int heap_pool_pcnt = 50;
+	int image_pool_pcnt = 0;
 	int cflag = 0;
 
 	int consoleprint = 1;

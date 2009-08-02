@@ -49,7 +49,7 @@ p32(uchar *p, ulong v)
 	USED(p);
 }
 
-static void
+void
 archetheraddr(Ether *e, GbeReg *reg, int queue)
 {
 	ulong nibble, ucreg;

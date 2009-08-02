@@ -1,0 +1,84 @@
+#!/dis/sh
+# TODO a lot ...
+load std
+autoload=std
+
+mem=/dev/sheevamem
+
+rdparm=0xf1010418
+wrparm=0xf101041C
+ctparm=0xf1010470
+
+nandbase=0xf9000000
+
+fn nandinit(){
+	echo nand driver init
+
+	echo nandbase $nandbase
+
+	echo rdparm $rdparm
+	mdb $mem $rdparm'/X'
+
+	echo wrparm $wrparm
+	mdb $mem $wrparm'/X'
+
+	echo ctparm $ctparm
+	mdb $mem $ctparm'/X'
+
+#	dd -if '#F/flash/flash' -bs 512 -count 1024 | xd -u -r
+}
+
+fn nandid(){
+	nandclaim 1
+
+	writecmd 0x90 1 0
+
+	writeb 0
+
+	readb
+	readb
+	readb 
+
+	nandclaim 0
+
+	echo maker $maker device $device
+}
+
+fn tohex(){ mdb $mem $1'=X' }
+
+# usage: nandclaim claim
+fn nandclaim(){
+	claim=$1
+	val=`{mdb $mem $ctparm/X}
+
+	newval=''
+	if{~ $claim 1}{
+		newval=`{echo -n 0x02 '|' $val | calc -r16}
+	}{
+		newval=`{echo -n 0xfffffffd '&' $val | calc -r16}
+	}
+	mdb -w $mem $ctparm'/W '^`{tohex $newval}
+}
+
+# usage: writecmd cmd cle ale
+fn writecmd(){
+	cmd=$1
+	cle=$2
+	ale=$3
+	
+	base=$nandbase
+	if{~ $cle 1}{ base=0xf9000001 }
+	if{~ $ale 1}{ base=0xf9000002 }
+
+	mdb -w $mem $base'/v '^$cmd
+}
+
+# usage: readb
+fn readb(){
+	mdb $mem $nandbase'/b'
+}
+
+# usage: writeb byte
+fn writeb(){
+	mdb -w $mem $nandbase'/v' $2
+}

@@ -39,12 +39,9 @@ echo text $text
 echo data $data
 echo bss $bss
 
+echo watchdog off > /dev/sheevactl
 echo
-echo dd -if $file -of /dev/mem -iseek 32 -oseek $entry
-
-touch /tmp/pc
-mdb -w /tmp/pc '0/W '$entry
-#mdb -w /tmp/pc '0/W 0x00008000'
-#mdb -w /tmp/pc '0/W 0x00800000'
-xd /tmp/pc
-#dd -if /tmp/pc -of /dev/boot
+echo dd -if $file -of /dev/sheevamem -iseek 32 -oseek $entry
+echo dd -if $file -of /dev/kexec -iseek 32
+echo mdb -wo /dev/boot '0/W '$entry
+#mdb -wo /dev/boot '0/W 0x00800000'

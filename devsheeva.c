@@ -9,6 +9,7 @@
 
 enum{
 	Qdir,
+	Qctl,
 	Qmem,
 	Qregs,
 
@@ -18,9 +19,16 @@ enum{
 static
 Dirtab sheevatab[]={
 	".",			{Qdir, 0, QTDIR},	0,	0555,
+	"sheevactl",		{Qctl},			0,	0600,
 	"sheevamem",		{Qmem, 0},		0,	0600,
 	"sheevaregs",		{Qregs, 0},		0,	0600,
 	"sheevadelay",		{Qdelay, 0},		0,	0600,
+};
+
+enum
+{
+	WDcheckms = 10*1000,
+	WDupdatems = (WDcheckms - (WDcheckms * 5)/100),
 };
 
 /* 
@@ -33,17 +41,14 @@ Dirtab sheevatab[]={
 static void
 watchdogproc(void*)
 {
-	int checkms = 10*1000;
-	int updatems = (checkms - (checkms * 5)/100);
-
 	//iprint("watchdogproc enabled update %ld\n", checkms);
 
 	TIMERREG->ctl |= TmrWDenable;
 	CPUCSREG->rstout |= RstoutWatchdog;
 
 	for(;;){
-		TIMERREG->timerwd = MS2TMR(checkms);
-		tsleep(&up->sleep, return0, nil, updatems);
+		TIMERREG->timerwd = MS2TMR(WDcheckms);
+		tsleep(&up->sleep, return0, nil, WDupdatems);
 	}
 }
 
@@ -114,13 +119,45 @@ sheevaread(Chan* c, void* a, long n, vlong offset)
 	return n;
 }
 
+enum {
+	CMwatchdog,
+};
+static Cmdtab sheevactl[] = 
+{
+	CMwatchdog,	"watchdog",	2,
+};
+
 static long
 sheevawrite(Chan* c, void* a, long n, vlong offset)
 {
+	Cmdbuf *cb;
+	Cmdtab *ct;
 	uchar *p;
 	ulong v;
 
 	switch((ulong)c->qid.path){
+	case Qctl:
+		if(!iseve())
+			error(Eperm);
+
+		cb = parsecmd(a, n);
+		if(waserror()) {
+			free(cb);
+			nexterror();
+		}
+		ct = lookupcmd(cb, sheevactl, nelem(sheevactl));
+		switch(ct->index) {
+		case CMwatchdog:
+			if(strcmp(cb->f[1], "on") == 0)
+				TIMERREG->ctl |= TmrWDenable;
+			else if(strcmp(cb->f[1], "off") == 0)
+				TIMERREG->ctl &= ~TmrWDenable;
+			else
+				error(Ebadctl);
+		}
+		poperror();
+		free(cb);
+		break;
 	case Qmem:
 		memmove((void*)offset, a, n);
 		break;
