@@ -400,6 +400,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	reg->acmd12errstatus = ~0;
 	printstatus("before cmd: ", reg->status, reg->errstatus);
 
+	microdelay(1000);
 	/* prepare args & execute command */
 	reg->argcmdlo = (arg>>0) & MASK(16);
 	reg->argcmdhi = (arg>>16) & MASK(16);
@@ -670,7 +671,7 @@ cardstr(Card *c, char *buf, int n)
 	snprint(buf, n,
 		"card %s\n"
 		"type %s\n"
-		"size %,lld bytes\n"
+		"size %lld bytes\n"
 		"blocksize %lud\n"
 		"manufactured %d-%02d\n"
 		"rev %#ux\n"
@@ -783,7 +784,7 @@ sdinit(void)
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
 		card.size *= 1<<card.csd.readblocklength;
-		kprint("csd0, block length read/write %d/%d, size %,lld bytes, eraseblock %d\n",
+		kprint("csd0, block length read/write %d/%d, size %lld bytes, eraseblock %d\n",
 			1<<card.csd.readblocklength, 
 			1<<card.csd.writeblocklength,
 			card.size,
@@ -791,7 +792,7 @@ sdinit(void)
 	} else {
 		card.bs = 512;
 		card.size = (vlong)(card.csd.size+1)*card.bs*1024;
-		kprint("csd1, fixed 512 block length, size %,lld bytes, eraseblock fixed 512\n", card.size);
+		kprint("csd1, fixed 512 block length, size %lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
 
@@ -814,7 +815,6 @@ static long
 sdio(uchar *a, long n, vlong offset, int iswrite)
 {
 	SdioReg *reg = SDIOREG;
-	uchar *buf;
 	ulong arg;
 
 	if(iswrite)
@@ -832,16 +832,11 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	if(n % card.bs != 0)
 		error("not multiple of sector size");
 
-	/* xxx for some reason i couldn't discover, using "a" directly causes corruption and makes the alloc routines panic in freetype/freeptrs...  i've check with a larger buffer, there doesn't seemt to be corruption before/after the buffer... */
-	buf = smalloc(n);
-	
-	if(waserror()) {
-		free(buf);
+	if(waserror())
 		nexterror();
-	}
 
-	reg->dmaaddrlo = (ulong)buf & MASK(16);
-	reg->dmaaddrhi = ((ulong)buf>>16) & MASK(16);
+	reg->dmaaddrlo = (ulong)a & MASK(16);
+	reg->dmaaddrhi = ((ulong)a>>16) & MASK(16);
 	reg->blksize = card.bs;
 	reg->blkcount = n/card.bs;
 	if(card.sdhc)
@@ -850,9 +845,7 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 		arg = offset;
 	if(sdcmd(&card, 18, arg) < 0)
 		errorsd("reading");
-	memmove(a, buf, n);
 
-	free(buf);
 	poperror();
 
 	return n;

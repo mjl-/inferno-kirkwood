@@ -17,7 +17,7 @@ if{~ $nettype static}{
 	echo add $ip $ipmask > /net/ipifc/$x/ctl
 	echo add 0 0 $ipgw > /net/iproute
 	
-	ip/ping -a -n 4 $ipgw
+#	ip/ping -a -n 4 $ipgw
 
 	echo done
 }{~ $nettype dynamic}{
@@ -43,7 +43,7 @@ if{~ $nettype static}{
 ndb/cs
 ndb/dns -r &
 
-mount -A -v net!$ipgw!styx /n/remote &
+mount -A -v net!$ipgw!styx /n/remote
 
 #echo -n listen telnet...
 #listen -A net!*!telnet {sh -i >[2=1]} &

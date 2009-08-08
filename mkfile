@@ -61,6 +61,7 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 
 ui$CONF: i$CONF
 	kstrip -o i$CONF.st i$CONF
+	#dd if=i$CONF.st of=i$CONF.tr bs=1 skip=32
 	mkuimage $KLOAD $KTZERO i$CONF.st >$target
 
 ui$CONF.gz: i$CONF

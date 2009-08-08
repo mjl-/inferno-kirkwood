@@ -154,6 +154,10 @@ sheevawrite(Chan* c, void* a, long n, vlong offset)
 				TIMERREG->ctl &= ~TmrWDenable;
 			else
 				error(Ebadctl);
+			break;
+		default:
+			error(Ebadctl);
+			break;
 		}
 		poperror();
 		free(cb);

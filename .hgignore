@@ -1,4 +1,7 @@
 .hgignore
 doc/.*\.pdf
 doc/.*\.zip
+doc/.*\.log
 guide.*
+.*\.5
+u?i?sheeva.*

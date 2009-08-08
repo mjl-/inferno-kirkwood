@@ -7,10 +7,10 @@ bind -a '#φ' /dev	# efuse
 bind -a '#T' /dev	# sheeva
 bind -a '#B' /dev	# boot
 
-echo static | run /netrc
-
 mount {mntgen} /n
 memfs /tmp
+
+echo static | run /netrc
 
 echo debug off > /dev/sdioctl
 echo init > /dev/sdioctl

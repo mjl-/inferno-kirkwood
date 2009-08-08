@@ -3,6 +3,7 @@
 load std
 
 fn tohex(){ mdb /dev/null $1'=X'; }
+fn toint(){ echo $1 | calc; }
 fn _magic(){ b=$1; tohex `{echo '((((4 * '$b' ) + 0 ) * '$b' ) + 7)' | calc}; }
 
 fn tole(){
@@ -24,24 +25,18 @@ data=`{tole ${index 3 $hdr}}
 bss=`{tole ${index 4 $hdr}}
 syms=`{tole ${index 5 $hdr}}
 entry=`{tole ${index 6 $hdr}}
-spsz=`{tole ${index 7 $hdr}}  # size of pc/sp offset table
-pcsz=`{tole ${index 8 $hdr}}  # size of pc/line number table
 
 if{! ~ $magic `{_magic 20}}{
 	echo bad magic $magic
 	exit
 }
 
-#cat /dev/memory
 #echo a.out hdr: $hdr
 echo entry $entry
 echo text $text
 echo data $data
 echo bss $bss
 
-echo watchdog off > /dev/sheevactl
-echo
-echo dd -if $file -of /dev/sheevamem -iseek 32 -oseek $entry
-echo dd -if $file -of /dev/kexec -iseek 32
-echo mdb -wo /dev/boot '0/W '$entry
-#mdb -wo /dev/boot '0/W 0x00800000'
+#echo watchdog off > /dev/sheevactl
+echo dd -if $file -of /dev/sheevamem -oseek `{echo $entry / 512 | calc}
+echo mdb -wo /dev/boot '0/W '`{tole $entry}

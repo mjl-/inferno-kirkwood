@@ -8,10 +8,10 @@
 TEXT _startup(SB), $-4
 	MOVW	$setR12(SB), R12
 
+	MOVW	$(MACHADDR+KSTACK-4), R13	/* leave 4 bytes for link */
+
 	MOVW	$(PsrDirq|PsrDfiq|PsrMsvc), R1	/* ensure svc mode, no interrupts */
 	MOVW	R1, CPSR
-
-	MOVW	$(MACHADDR+KSTACK-4), R13
 
 	BL	main(SB)	/* jump to kernel */
 dead:
@@ -232,7 +232,6 @@ TEXT mmuinit(SB), $-4
 	/* enable icache, dcache and mpu */
 	MRC	CpMMU, 0, R0, C(CpControl), C0, 0
 	ORR	$(CpCrrob|CpCIcache|CpCDcache), R0
-	BIC	$(CpCDcache), R0	/* no dcache for now, will have to flush in drivers doing dma first. */
 	MCR	CpMMU, 0, R0, C(CpControl), C0, 0
 	RET
 

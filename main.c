@@ -120,6 +120,8 @@ poolsizeinit(void)
 	poolsize(imagmem, (nb*image_pool_pcnt)/100, 1);
 }
 
+#define doc(s)	if(1) serialputs(s, strlen(s))
+
 void
 main(void)
 {
@@ -127,9 +129,10 @@ main(void)
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
 
+	doc("archreset\n");
+	archreset();
 	mmuinit();
 	quotefmtinstall();
-	archreset();
 	confinit();
 	xinit();
 	poolinit();

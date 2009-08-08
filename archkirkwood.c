@@ -24,7 +24,7 @@ devidstr(ulong v)
 void
 archconfinit(void)
 {
-	conf.topofmem = 512*1024*124;
+	conf.topofmem = 512*1024*1024;
 
 	m->cpuhz = 1200*1000*1000;
 	m->delayloop = m->cpuhz/6000;  /* initial estimate */
@@ -102,22 +102,20 @@ enum
 	SheevaOEHigh	= ~0,
 };
 
-static void
-gpioconf(ulong gpp0_oe_val, ulong gpp1_oe_val, ulong gpp0_oe, ulong gpp1_oe)
-{
-	GPIO0REG->dataout = gpp0_oe_val;
-	GPIO0REG->dataoutena = gpp0_oe;
-
-	GPIO1REG->dataout= gpp1_oe_val;
-	GPIO1REG->dataoutena= gpp1_oe;
-}
-
-
 void
 archreset(void)
 {
 	/* reset devices to initial state */
-	gpioconf(SheevaOEValLow, SheevaOEValHigh, SheevaOELow, SheevaOEHigh);
+
+	/* watchdog disabled */
+ 	TIMERREG->ctl &= ~TmrWDenable;
+	
+	/* configure gpios */
+	GPIO0REG->dataout = SheevaOEValLow;
+	GPIO0REG->dataoutena = SheevaOELow;
+
+	GPIO1REG->dataout = SheevaOEValHigh;
+	GPIO1REG->dataoutena = SheevaOEHigh;
 }
 
 void
