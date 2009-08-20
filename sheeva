@@ -99,13 +99,32 @@ root
 	/dis	/
 	/env	/
 	/fd	/
-	/n	/
+	/keydb	/
 	/net	/
 	/nvfs	/
 	/prog	/
 	/tmp	/
 	/osinit.dis
 
+# intialisation
+# dos file system
+	/dis/dossrv.dis
+	/dis/disk/format.dis
+
+# kfs file system
+	/dis/disk/kfs.dis
+	/dis/disk/kfscmd.dis
+
+# dhcp
+	/dis/lib/dhcpclient.dis
+	/dis/lib/ip.dis
+
+# used by file systems and commands
+	/dis/lib/arg.dis
+	/dis/lib/styx.dis
+	/dis/lib/string.dis
+	/dis/lib/daytime.dis
+	/dis/lib/filepat.dis
 
 # For development work:
 	/dis/sh.dis
@@ -202,6 +221,16 @@ root
 	/usr/inferno/keyring
 	/usr/inferno/lib
 
+	/mnt/keys
+
+	/n/remote
+	/n/local
+	/n/client
+	/n/rdbg
+	/n/dump
+	/n/disk
+	/n/kfs
+	
 	/init	/os/kirkwood/misc/init
 	/netrc	/os/kirkwood/misc/netrc
 	/kexec	/os/kirkwood/misc/kexec

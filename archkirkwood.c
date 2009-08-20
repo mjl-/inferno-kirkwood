@@ -14,9 +14,10 @@ static char *
 devidstr(ulong v)
 {
 	switch(v) {
-	case 0x0:	return "88F6180";
+	case 0x0:	return "88F6180-Z0";
 	case 0x1:	return "88F619[02]";
-	case 0x2:	return "88F6281";
+	case 0x2:	return "88F6281-A0";
+	case 0x3:	return "88F6281-A1";
 	}
 	return "unknown";
 }
@@ -96,10 +97,10 @@ archether(int ctlrno, Ether *e)
 /* LED/USB gpios */
 enum
 {
-	SheevaOEValLow	= 1<<29,        /* USB_PWEN low */
-	SheevaOEValHigh	= 1<<17,        /* LED pin high */
-	SheevaOELow	= ~0,
-	SheevaOEHigh	= ~0,
+	UsbPWOEValLow	= 1<<29,        /* USB_PWEN low */
+	UsbPWOELow	= ~0,
+	LedOEValHigh	= 1<<17,        /* LED pin high */
+	LedOEHigh	= ~0,
 };
 
 void
@@ -111,11 +112,13 @@ archreset(void)
  	TIMERREG->ctl &= ~TmrWDenable;
 	
 	/* configure gpios */
-	GPIO0REG->dataout = SheevaOEValLow;
-	GPIO0REG->dataoutena = SheevaOELow;
+	GPIO0REG->dataout = UsbPWOEValLow;
+//	GPIO1REG->dataout = LedOEValHigh;
 
-	GPIO1REG->dataout = SheevaOEValHigh;
-	GPIO1REG->dataoutena = SheevaOEHigh;
+	GPIO0REG->dataoutena = UsbPWOELow;
+//	GPIO1REG->dataoutena = LedOEHigh;
+
+	GPIO1REG->blinkena = LedOEValHigh;
 }
 
 void

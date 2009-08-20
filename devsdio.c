@@ -6,7 +6,7 @@
 #include	"../port/error.h"
 #include	"io.h"
 
-static int debug = 1;
+static int debug = 0;
 #define dprint	if(debug)print
 
 char Enocard[] = "no card";
@@ -115,6 +115,15 @@ enum {
 	ACMD41ready		= 1<<31,
 };
 
+enum {
+	ESAcmd12Notexe		= 1<<0,
+	ESAcmd12Timeout		= 1<<1,
+	ESAcmd12CrcErr		= 1<<2,
+	ESAcmd12EndBitErr	= 1<<3,
+	ESAcmd12IndexErr	= 1<<4,
+	ESAcmd12RespTBi		= 1<<5,
+	ESAcmd12RespStartBitErr	= 1<<6,
+};
 
 typedef struct Card Card;
 typedef struct Cid Cid;
@@ -187,19 +196,13 @@ enum {
 static
 Dirtab sdiotab[]={
 	".",		{Qdir, 0, QTDIR},	0,	0555,
-	"sdioctl",	{Qctl},			0,	0666,
-	"sdioinfo",	{Qinfo},		0,	0444,
-	"sdiodata",	{Qdata},		0,	0666,
+	"ctl",	{Qctl},			0,	0666,
+	"info",	{Qinfo},		0,	0444,
+	"data",	{Qdata},		0,	0666,
 };
 
 
-static int
-min(int a, int b)
-{
-	if(a < b)
-		return a;
-	return b;
-}
+#define min(a, b) ((a)<(b)? (a): (b))
 
 static ulong
 bits(uchar *p, int msb, int lsb)
@@ -315,8 +318,28 @@ errstatusstr(char *p, char *e, ulong v)
 	return p;
 }
 
+char *acmd12errstatusstrs[] = {
+"acmd12notexe",
+"acmd12timeout",
+"acmd12crcerr",
+"acmd12endbiterr",
+"acmd12indexerr",
+"acmd12resptbi",
+"acmd12respstartbiterr",
+};
+
+static char *
+acmd12errstatusstr(char *p, char *e, ulong v)
+{
+	int i;
+	for(i = 0; i < nelem(acmd12errstatusstrs); i++)
+		if(v & (1<<i))
+			p = seprint(p, e, " %q", acmd12errstatusstrs[i]);
+	return p;
+}
+
 static void
-printstatus(char *s, ulong status, ulong errstatus)
+printstatus(char *s, ulong status, ulong errstatus, ulong acmd12errstatus)
 {
 	char *p, *e;
 
@@ -329,6 +352,8 @@ printstatus(char *s, ulong status, ulong errstatus)
 	p = statusstr(p, e, status);
 	p = seprint(p, e, ";");
 	p = errstatusstr(p, e, errstatus);
+	p = seprint(p, e, ";");
+	p = acmd12errstatusstr(p, e, acmd12errstatus);
 	USED(p);
 
 	print("status: %s%s\n", s, up->genbuf);
@@ -398,7 +423,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	reg->status = ~0;
 	reg->errstatus = ~0;
 	reg->acmd12errstatus = ~0;
-	printstatus("before cmd: ", reg->status, reg->errstatus);
+	printstatus("before cmd: ", reg->status, reg->errstatus, reg->acmd12errstatus);
 
 	microdelay(1000);
 	/* prepare args & execute command */
@@ -422,21 +447,21 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 
 	if(cmd == 17 || cmd == 18) {
 		/* wait for dma interrupt that signals completion */
-//		tsleep(&dmar, dmafinished, nil, 250);
+		tsleep(&dmar, dmafinished, nil, 250);
 
 		need = NScmdcomplete|NSdmaintr;
 		if((reg->status & need) != need || (reg->status & (NSerror|NSunexpresp)) != 0) {
-			printstatus("dma err: ", reg->status, reg->errstatus);
-//			return SDError;
+			printstatus("dma err: ", reg->status, reg->errstatus, reg->acmd12errstatus);
+			return SDError;
 		}
-	} /*else*/ {
+	} else {
 		/* poll for completion/error */
 		need = NScmdcomplete;
 		i = 0;
 		for(;;) {
 			v = reg->status;
 			if(v & (NSerror|NSunexpresp)) {
-				printstatus("error: ", v, reg->errstatus);
+				printstatus("error: ", v, reg->errstatus, reg->acmd12errstatus);
 				if(reg->errstatus & EScmdtimeout)
 					return SDTimeout;
 				return SDError;
@@ -445,13 +470,13 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 				break;
 			if(i++ >= 100) {
 				print("command unfinished\n");
-				printstatus("timeout: ", v, reg->errstatus);
+				printstatus("timeout: ", v, reg->errstatus, reg->acmd12errstatus);
 				return SDError;
 			}
 			tsleep(&up->sleep, return0, nil, 10);
 		}
 	}
-	printstatus("success", reg->status, reg->errstatus);
+	printstatus("success", reg->status, reg->errstatus, reg->acmd12errstatus);
 
 	/* fetch the response */
 	memset(c->resp, '\0', Respmax);
@@ -693,7 +718,7 @@ sdinit(void)
 	ulong v;
 	SdioReg *reg = SDIOREG;
 
-	//sdclock(400*1000);
+	sdclock(400*1000);
 	reg->hostctl &= ~HChighspeed;
 
 	/* force card to idle state */
@@ -778,7 +803,7 @@ sdinit(void)
 		errorsd("bad csd register");
 
 	if(card.csd.version == 0) {
-//		card.bs = 1<<card.csd.readblocklength;
+		card.bs = 1<<card.csd.readblocklength;
 		card.bs = 512;
 
 		card.size = card.csd.size+1;
@@ -795,6 +820,14 @@ sdinit(void)
 		kprint("csd1, fixed 512 block length, size %lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
+	if(card.sdhc) {
+		dprint("enabling sdhc & setting clock to 50mhz\n");
+		sdclock(50*1000*1000);
+		reg->hostctl |= HChighspeed;
+	} else {
+		dprint("leaving sdhc off & setting clock to 25mhz\n");
+		sdclock(25*1000*1000);
+	}
 
 	if(sdcmd(&card, 7, card.rca<<16) < 0)
 		errorsd("selecting card");
@@ -825,12 +858,12 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 
 	/* xxx we should cover this cases with a buffer, and then use the same code to allow non-sector-aligned reads? */
 	if((ulong)a % 4 != 0)
-		error("bad buffer alignment...");
+		error("sdio: a not word aligned");
 
-	if(offset % card.bs != 0)
-		error("not sector aligned");
 	if(n % card.bs != 0)
-		error("not multiple of sector size");
+		error("sdio: n not block aligned");
+	if(offset % card.bs != 0)
+		error("sdio: offset not block aligned");
 
 	if(waserror())
 		nexterror();
@@ -892,9 +925,9 @@ sdioreset(void)
 	SdioReg *reg = SDIOREG;
 
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
-//	reg->statusirqmask = 0;
-//	reg->errstatusirqmask = 0;
-//	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
+	reg->statusirqmask = 0;
+	reg->errstatusirqmask = 0;
+	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
 static void
@@ -908,8 +941,7 @@ sdioinit(void)
 	reg->swreset = SRresetall;
 	tsleep(&up->sleep, return0, nil, 50);
 
-	/* commented as it makes reads fail with: "reading, error for cmd 18" */
-	//sdclock(25*1000*1000);
+	sdclock(25*1000*1000);
 
 	/* configure host controller */
 	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15); // xxx HCtimeoutenable;
@@ -925,6 +957,8 @@ sdioinit(void)
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
 	reg->statusirqmask = 0;
 	reg->errstatusirqmask = 0;
+
+	sdinit();
 }
 
 static Chan*
@@ -1036,7 +1070,7 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 		free(cb);
 		break;
 	case Qdata:
-		n = sdio(a, n, offset, 0);
+		n = sdio(a, n, offset, 1);
 		break;
 	default:
 		error(Ebadusefd);

@@ -12,12 +12,12 @@ memfs /tmp
 
 echo static | run /netrc
 
-echo debug off > /dev/sdioctl
-echo init > /dev/sdioctl
-cat /dev/sdioctl
+echo debug off > '#o'/ctl
+echo init > '#o'/ctl
+cat '#o'/ctl
 
-dossrv  -f /dev/sdiodata -m /n/dos
-unmount /n/dos
+dossrv  -f '#o'/data -m /n/dos
+#unmount /n/dos
 
 while {} {
 	echo shell...

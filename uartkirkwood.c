@@ -8,7 +8,7 @@
 #include "../port/uart.h"
 
 enum {
-	UartFREQ =	0, // xxx
+	UartFREQ =	CLOCKFREQ,
 };
 
 extern PhysUart kirkwoodphysuart;
@@ -17,6 +17,8 @@ typedef struct Ctlr Ctlr;
 struct Ctlr {
 	UartReg*	regs;
 	int	irq;
+	int	iena;
+	int	fena;
 	Lock;
 };
 
@@ -91,25 +93,39 @@ kw_enable(Uart* uart, int ie)
         Ctlr *ctlr = uart->regs;
 	UartReg *regs = ctlr->regs;
 
-	regs->fcr = FCRenable|FCRrxtrigger4;
-	regs->ier = IERrx|IERtx;
-	intrenable(Irqhi, ctlr->irq, kw_intr, uart, uart->name);
+	/*
+ 	 * Enable interrupts and turn on DTR and RTS.
+	 * Be careful if this is called to set up a polled serial line
+	 * early on not to try to enable interrupts as interrupt-
+	 * -enabling mechanisms might not be set up yet.
+	 */
+	if(ie){
+		if(ctlr->iena == 0){
+			(*uart->phys->fifo)(uart, 4);
+			regs->ier = IERrx|IERtx;
+			intrenable(Irqhi, ctlr->irq, kw_intr, uart, uart->name);
 
-        (*uart->phys->dtr)(uart, 1);
-        (*uart->phys->rts)(uart, 1);
+			ctlr->iena = 1;
+		}
+	}
+
+	(*uart->phys->dtr)(uart, 1);
+	(*uart->phys->rts)(uart, 1);
 }
 
 static void
 kw_disable(Uart* uart)
 {
-        Ctlr *ctlr = uart->regs;
-	UartReg *regs = ctlr->regs;
+	Ctlr *ctlr = uart->regs;
 
-        (*uart->phys->dtr)(uart, 0);
-        (*uart->phys->rts)(uart, 0);
-        (*uart->phys->fifo)(uart, 0);
+	(*uart->phys->dtr)(uart, 0);
+	(*uart->phys->rts)(uart, 0);
+	(*uart->phys->fifo)(uart, 0);
 
-	intrdisable(Irqhi, ctlr->irq, kw_intr, uart, uart->name);
+	if(ctlr->iena != 0){
+		if(intrdisable(Irqhi, ctlr->irq, kw_intr, uart, uart->name) == 0)
+			ctlr->iena = 0;
+	}
 }
 
 static void
@@ -134,66 +150,233 @@ kw_kick(Uart* uart)
 static void
 kw_break(Uart* uart, int ms)
 {
-	// xxx
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	
+	/*
+	 * Send a break.
+	 */
+	if(ms <= 0)
+		ms = 200;
+
+	ctlr = uart->regs;
+	regs->lcr |= LCRbreak;
+	tsleep(&up->sleep, return0, 0, ms);
+	regs->lcr &= ~LCRbreak;
 }
 
 static int
 kw_baud(Uart* uart, int baud)
 {
-	// xxx
+	ulong bgc;
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	
+	/*
+	 * Set the Baud rate by calculating and setting the Baud rate
+	 * Generator Constant. This will work with fairly non-standard
+	 * Baud rates.
+	 */
+	if(uart->freq == 0 || baud <= 0)
+		return -1;
+	bgc = (uart->freq+8*baud-1)/(16*baud);
+
+	regs->lcr |= LCRdivlatch;
+	regs->dll = bgc & 0xff;
+	regs->dlh = (bgc>>8) & 0xff;
+	regs->lcr &= ~LCRdivlatch;
+
+	uart->baud = baud;
+
 	return 0;
 }
 
 static int
 kw_bits(Uart* uart, int bits)
 {
-	// xxx
+	int lcr;
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	
+	lcr = regs->lcr & ~LCRbpcmask;
+
+	switch(bits){
+	case 5:
+		lcr |= LCRbpc5;
+		break;
+	case 6:
+		lcr |= LCRbpc6;
+		break;
+	case 7:
+		lcr |= LCRbpc7;
+		break;
+	case 8:
+		lcr |= LCRbpc8;
+		break;
+	default:
+		return -1;
+	}
+	regs->mcr = lcr;
+
+	uart->bits = bits;
+
 	return 0;
 }
 
 static int
 kw_stop(Uart* uart, int stop)
 {
-	// xxx
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	int lcr;
+
+	lcr = regs->lcr & ~LCRstop2b;
+
+	switch(stop){
+	case 1:
+		break;
+	case 2:
+		lcr |= LCRstop2b;
+		break;
+	default:
+		return -1;
+	}
+	regs->lcr = lcr;
+
+	uart->stop = stop;
 	return 0;
 }
 
 static int
 kw_parity(Uart* uart, int parity)
 {
-	// xxx
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	int lcr;
+
+	lcr = regs->lcr & ~(LCRparity|LCRparityeven);
+
+	switch(parity){
+	case 'e':
+		lcr |= LCRparity|LCRparityeven;
+		break;
+	case 'o':
+		lcr |= LCRparity;
+		break;
+	case 'n':
+		break;
+	default:
+		return -1;
+	}
+
+	regs->lcr = lcr;
+	uart->parity = parity;
+
 	return 0;
 }
 
 static void
 kw_modemctl(Uart* uart, int on)
 {
-	// xxx
+	USED(uart, on);
 }
 
 static void
 kw_rts(Uart* uart, int on)
 {
-	// xxx
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	ulong mcr;
+
+	mcr = regs->mcr & ~MCRrts;
+	
+	/*
+	 * Toggle RTS.
+	 */
+	if(on)
+		mcr |= MCRrts;
+	else
+		mcr &= ~MCRrts;
+	regs->mcr = mcr;
 }
 
 static void
 kw_dtr(Uart* uart, int on)
 {
-	// xxx
+	USED(uart, on);
 }
 
 static long
 kw_status(Uart* uart, void* buf, long n, long offset)
 {
-	// xxx
-	return 0;
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+	uchar ier, lcr, mcr, msr;
+	char *p;
+
+	p = malloc(READSTR);
+	mcr = regs->mcr;
+	msr = regs->msr;
+	ier = regs->ier;
+	lcr = regs->lcr;
+	snprint(p, READSTR,
+		"b%d c%d e%d l%d m%d p%c r%d s%d i%d\n"
+		"dev(%d) type(%d) framing(%d) overruns(%d) "
+		"berr(%d) serr(%d)%s\n",
+
+		uart->baud,
+		uart->hup_dcd, 
+		uart->hup_dsr,
+		(lcr & LCRbpcmask) + 5,
+		(ier & IERems) != 0, 
+		(lcr & LCRparity) ? ((lcr & LCRparityeven) ? 'e': 'o'): 'n',
+		(mcr & MCRrts) != 0,
+		(lcr & LCRstop2b) ? 2: 1,
+		ctlr->fena,
+
+		uart->dev,
+		uart->type,
+		uart->ferr,
+		uart->oerr,
+		uart->berr,
+		uart->serr,
+		(msr & MSRdcts) ? " cts": ""
+	);
+	n = readstr(offset, buf, n, p);
+	free(p);
+
+	return n;
 }
 
 static void
 kw_fifo(Uart* uart, int level)
 {
-	// xxx
+	Ctlr *ctlr = uart->regs;
+	UartReg *regs = ctlr->regs;
+
+	/*
+	 * Set the trigger level, default is the max value.
+	 */
+	ilock(ctlr);
+	ctlr->fena = level;
+	switch(level){
+	case 0:
+		break;
+	case 1:
+		level = FCRrxtrigger1|FCRenable;
+		break;
+	case 4:
+		level = FCRrxtrigger4|FCRenable;
+		break;
+	case 8:
+		level = FCRrxtrigger8|FCRenable;
+		break;
+	default:
+		level = FCRrxtrigger14|FCRenable;
+		break;
+	}
+	regs->fcr = level;
+	iunlock(ctlr);
 }
 
 static int
@@ -243,8 +426,28 @@ void
 uartconsole(void)
 {
 	Uart *uart;
+	int n;
+	char *cmd, *p;
 
-	uart = &kirkwooduart[0];
+//	if((p = getconf("console")) == nil){
+//		return;
+//	n = strtoul(p, &cmd, 0);
+//	if(p == cmd)
+//		return;
+
+	switch(n){
+	default:
+		return;
+	case 0:
+		uart = &kirkwooduart[0];
+		break;
+	}
+
+	(*uart->phys->enable)(uart, 0);
+	uartctl(uart, "b115200 l8 pn s1");
+	if(cmd && *cmd != '\0')
+		uartctl(uart, cmd);
+
 	consuart = uart;
 	uart->console = 1;
 }
@@ -254,7 +457,7 @@ void
 serialputc(int c)
 {
 	while((UART0REG->lsr&LSRthre) == 0)
-		delay(1);
+		microdelay(100);
 	UART0REG->thr = c;
 }
 

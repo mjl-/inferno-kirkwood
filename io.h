@@ -194,6 +194,8 @@ struct TimerReg
 enum {
 	IERrx		= 1<<0,
 	IERtx		= 1<<1,
+	IERelsi		= 1<<2,
+	IERems		= 1<<3,
 
 	IRRintrmask	= (1<<4)-1,
 	IRRnointr	= 1,
@@ -227,6 +229,12 @@ enum {
 	LCRbreak	= 1<<6,
 	LCRdivlatch	= 1<<7,
 
+	MCRrts		= 1<<1,
+	MCRloop		= 1<<4,
+
+	MSRdcts		= 1<<0,
+	MSRctx		= 1<<4,
+	
 	LSRrx		= 1<<0,
 	LSRrunerr	= 1<<1,
 	LSRparerr	= 1<<2,
@@ -258,6 +266,7 @@ struct UartReg
 	ulong	lcr;
 	ulong	mcr;
 	ulong	lsr;
+	ulong	msr;
 	ulong	scr;
 };
 

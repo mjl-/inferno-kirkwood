@@ -110,7 +110,7 @@ intrenable(int sort, int v, void (*f)(Ureg*, void*), void *a, char *name)
 	iunlock(&irqlock);
 }
 
-void
+int
 intrdisable(int sort, int v, void (*f)(Ureg*, void*), void* a, char *name)
 {
 	int x;
@@ -121,6 +121,7 @@ intrdisable(int sort, int v, void (*f)(Ureg*, void*), void* a, char *name)
 	intrmask(sort, v);
 	splx(x);
 	iunlock(&irqlock);
+	return 0;
 }
 
 static void

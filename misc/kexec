@@ -23,7 +23,6 @@ magic=`{tole ${index 1 $hdr}}
 text=`{tole ${index 2 $hdr}}
 data=`{tole ${index 3 $hdr}}
 bss=`{tole ${index 4 $hdr}}
-syms=`{tole ${index 5 $hdr}}
 entry=`{tole ${index 6 $hdr}}
 
 if{! ~ $magic `{_magic 20}}{
@@ -38,5 +37,6 @@ echo data $data
 echo bss $bss
 
 #echo watchdog off > /dev/sheevactl
+dd -if $file -of /dev/sheevamem -oseek
 echo dd -if $file -of /dev/sheevamem -oseek `{echo $entry / 512 | calc}
 echo mdb -wo /dev/boot '0/W '`{tole $entry}
