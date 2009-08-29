@@ -12,12 +12,25 @@ memfs /tmp
 
 echo static | run /netrc
 
-echo debug off > '#o'/ctl
-echo init > '#o'/ctl
-cat '#o'/ctl
+echo watchdog off > /dev/sheevactl
+echo debug off > /dev/sdioctl
+echo init > /dev/sdioctl
+cat /dev/sdioctl
 
-dossrv  -f '#o'/data -m /n/dos
-#unmount /n/dos
+echo dossrv
+dossrv  -f /dev/sdio -m /n/dos
+
+bind -b /n/dos/dis /dis
+bind -b /n/dos/keydb /keydb
+bind -b /n/dos/nvfs /nvfs
+bind -b /n/dos/usr /usr
+bind -b /n/dos/man /man
+
+# TODO get nvkey from efuse
+echo svc
+run /dis/svc/auth
+run /dis/svc/styx
+run /dis/svc/rstyx
 
 while {} {
 	echo shell...

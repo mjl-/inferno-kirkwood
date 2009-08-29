@@ -35,7 +35,7 @@ void	intrenable(int, int, void (*)(Ureg*, void*), void*, char*);
 void	kbdinit(void);
 void	links(void);
 void 	microdelay(int us);
-void	mmuinit(void);
+ulong	mmuinit(void);
 int	pcmspecial(char *, ISAConf *);
 void	screeninit(void);
 void	trapinit(void);

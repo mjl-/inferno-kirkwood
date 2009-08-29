@@ -13,6 +13,8 @@
 #define	MIIDBG	if(0)iprint
 
 /*
+ * Marvell 88E1116 gbe controller
+ *
  * todo:
  * - properly make sure preconditions hold (e.g. being idle) when performing some of the operations (enabling port or queue).
  *
@@ -125,7 +127,6 @@ struct Ctlr
 };
 
 
-#define MASK(v)	((1<<(v))-1)
 enum {
 #define	Rxqenable(q)	(1<<(q))
 #define Rxqdisable(q)	(1<<((q)+8)
@@ -335,10 +336,10 @@ rxallocb(void)
 static void
 rxfreeb(Block *b)
 {
+	ilock(&freeblocks);
 	b->rp = (uchar*)((uintptr)(b->lim-Rxblocklen) & ~(Bufalign-1));
 	b->wp = b->rp;
 
-	ilock(&freeblocks);
 	b->next = freeblocks.head;
 	freeblocks.head = b;
 	iunlock(&freeblocks);
@@ -352,8 +353,10 @@ rxreplenish(Ctlr *ctlr)
 
 	while(ctlr->rxb[ctlr->rxtail] == nil) {
 		b = rxallocb();
-		if(b == nil)
+		if(b == nil){
+			iprint("no available buffers\n");
 			break;
+		}
 
 		ctlr->rxb[ctlr->rxtail] = b;
 		r = &ctlr->rx[ctlr->rxtail];
@@ -402,13 +405,14 @@ receive(Ether *e)
 }
 
 static void
-txstart(Ether *e)
+transmit(Ether *e)
 {
 	Ctlr *ctlr = e->ctlr;
 	GbeReg *reg = ctlr->reg;
 	Tx *t;
 	Block *b;
 
+	ilock(ctlr);
 	/* free transmitted packets */
 	while(ctlr->txtail != ctlr->txhead && (ctlr->tx[ctlr->txtail].cs & TCSdmaown) == 0) {
 		if(ctlr->txb[ctlr->txtail] == nil)
@@ -439,15 +443,6 @@ txstart(Ether *e)
 		
 		ctlr->txhead = NEXT(ctlr->txhead, Ntx);
 	}
-}
-
-static void
-transmit(Ether *e)
-{
-	Ctlr *ctlr = e->ctlr;
-
-	ilock(ctlr);
-	txstart(e);
 	iunlock(ctlr);
 }
 
@@ -489,7 +484,7 @@ interrupt(Ureg*, void *arg)
 	if(irq & Irxbufferq(0))
 		receive(e);
 	if(qcanread(e->oq) && (irqe & IEtxbufferq(0)))
-		txstart(e);
+		transmit(e);
 
 	if(linkchange && (reg->ps1 & PS1autonegdone)) {
 		e->link = (reg->ps0 & PS0linkup) != 0;
@@ -522,9 +517,7 @@ multicast(void *arg, uchar *addr, int on)
 	 * xxx do we need to do anything?
 	 * we can explicitly filter (pass/block) on multicast addresses if we want...
 	 */
-	USED(arg);
-	USED(addr);
-	USED(on);
+	USED(arg, addr, on);
 }
 
 
@@ -580,10 +573,9 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	GbeReg *reg = ctlr->reg;
 	char *buf, *p, *e;
 
-	buf = p = smalloc(2*READSTR);
+	ilock(&ctlr->initlock);
+	buf = p = malloc(2*READSTR);
 	e = p+2*READSTR;
-
-	ilock(ctlr);
 
 	getmibstats(ctlr);
 
@@ -635,10 +627,11 @@ ifstat(Ether *ether, void *a, long n, ulong off)
 	p = seprint(p, e, "collisions: %lud\n", ctlr->collisions);
 	p = seprint(p, e, "late collisions: %lud\n", ctlr->latecollisions);
 	USED(p);
-	iunlock(ctlr);
 
 	n = readstr(off, a, n, buf);
 	free(buf);
+	iunlock(&ctlr->initlock);
+
 	return n;
 }
 
@@ -712,7 +705,7 @@ enum
 	PhySmiOpcodeRd	= 1<<PhySmiOpcode,
 	
 	PhySmiReadValid	= 1<<27,
-	PhySmiBusy		= 1<<28,
+	PhySmiBusy	= 1<<28,
 	
 	SmiRegAddrOff	= 21,				// PHY device register addr
 	SmiRegAddrMsk	= 0x1f << SmiRegAddrOff,
@@ -720,20 +713,18 @@ enum
 };
 
 static int
-smibusywait(GbeReg *reg)
+smibusywait(GbeReg *reg, int waitbit)
 {
 	ulong timeout, smi_reg;
 	
 	timeout = PhySmiTimeout;
-	/* wait till the SMI is not busy */
 	do {
-		/* read smi register */
 		smi_reg = reg->smi;
 		if (timeout-- == 0) {
-			MIIDBG("SMI busy timeout\n");
+			MIIDBG("SMI busy timeout %x\n", waitbit);
 			return -1;
 		}
-	} while (smi_reg & PhySmiBusy);
+	} while (smi_reg & waitbit);
 	return 0;
 }
 
@@ -758,26 +749,19 @@ miird(Mii *mii, int pa, int ra)
 	if (ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
 		return -1;
 	
-	smibusywait(reg);
+	smibusywait(reg, PhySmiBusy);
 
 	/* fill the phy address and regiser offset and read opcode */
 	smi_reg = (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff) | PhySmiOpcodeRd;
 	reg->smi = smi_reg;
 	
 	/*wait till readed value is ready */
-	timeout = PhySmiTimeout;
-	do {
-		/* read smi register */
-		smi_reg = reg->smi;
-		if (timeout-- == 0) {
-			MIIDBG("SMI read-valid timeout\n");
-			return -1;
-		}
-	} while (!(smi_reg & PhySmiReadValid));
-	
+	if(smibusywait(reg, PhySmiReadValid) < 0)
+		return -1;
+
 	/* Wait for the data to update in the SMI register */
 	for (timeout = 0; timeout < PhySmiTimeout; timeout++)
-	{}
+		{}
 	
 	return reg->smi & PhySmiDataMsk;
 }
@@ -798,7 +782,7 @@ miiwr(Mii *mii, int pa, int ra, int v)
 	if (ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
 		return -1;
 	
-	smibusywait(reg);
+	smibusywait(reg, PhySmiBusy);
 	
 	/* fill the phy address and regiser offset and read opcode */
 	smi_reg = v<<PhySmiDataOff;
@@ -902,40 +886,29 @@ portreset(GbeReg *reg)
 {	
 	ulong v, i;
 	
-	/* Stop Tx port activity. Check port Tx activity. */
 	v = reg->tqc;
-	if (v & 0xFF) {
-		/* Issue stop command for active channels only */
+	if (v & 0xff) {
+		/* Stop & Wait for all Tx activity to terminate. */
 		reg->tqc = v << 8;
-
-		/* Wait for all Tx activity to terminate. */
-		do {
-			/* Check port cause register that all Tx queues are stopped */
-			v = reg->tqc;
-		} while (v & 0xFF);
+		while (reg->tqc & 0xff)
+			{}
 	}
 
-	/* Stop Rx port activity. Check port Rx activity. */
 	v = reg->rqc;
-	if (v & 0xFF) {
-		/* Issue stop command for active channels only */
+	if (v & 0xff) {
 		reg->rqc = v << 8;
-
-		/* Wait for all Rx activity to terminate. */
-		do {
-			/* Check port cause register that all Rx queues are stopped */
-			v = reg->rqc;
-		} while (v & 0xFF);
+		/* Stop & Wait for all Rx activity to terminate. */
+		while (reg->rqc & 0xff);
+			{}
 	}
 
-	/* Enable port in the Configuration Register */
-	reg->psc0 &= ~1;
-	/* Set port of active in the Configuration Register */
-	reg->psc1 &= ~(1 << 4);
-	/* Set MMI interface up */
-	reg->psc1 &= ~(1 << 3);
+	/* enable port */
+	reg->psc0 &= ~PSC0portenable;
+	/* Set port & MMI active */
+	reg->psc1 &= ~(PSC1rgmii|PSC1portreset);
+
 	for (i = 0; i < 4000; i++)
-	{}
+		{}
 }
 
 static void
@@ -954,7 +927,7 @@ ctlrinit(Ether *e)
 		for(i = 0; i < Nrxblocks; i++) {
 			b = iallocb(Rxblocklen+Bufalign-1);
 			if(b == nil) {
-				print("no memory for rxring\n");
+				iprint("no memory for rxring\n");
 				break;
 			}
 			b->free = rxfreeb;

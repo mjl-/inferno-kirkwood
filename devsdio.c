@@ -18,7 +18,6 @@ enum {
 	SDError		= -3,
 };
 
-#define MASK(x)	(((ulong)1<<(x))-1)
 enum {
 	/* transfer mode */
 	TMautocmd12	= 1<<2,
@@ -196,9 +195,9 @@ enum {
 static
 Dirtab sdiotab[]={
 	".",		{Qdir, 0, QTDIR},	0,	0555,
-	"ctl",	{Qctl},			0,	0666,
-	"info",	{Qinfo},		0,	0444,
-	"data",	{Qdata},		0,	0666,
+	"sdioctl",	{Qctl},			0,	0666,
+	"sdioinfo",	{Qinfo},		0,	0444,
+	"sdio",		{Qdata},		0,	0666,
 };
 
 
@@ -802,9 +801,8 @@ sdinit(void)
 	if(parsecsd(&card.csd, card.resp) < 0)
 		errorsd("bad csd register");
 
-	if(card.csd.version == 0) {
+	if(card.csd.version == 0 && card.sdhc) {
 		card.bs = 1<<card.csd.readblocklength;
-		card.bs = 512;
 
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
@@ -914,8 +912,10 @@ sdiointr(Ureg*, void*)
 	 * don't clear the status, just make sure we are not called again
 	 * before this interrupt is handled.
 	 */
-	wakeup(&dmar);
-	reg->statusirqmask &= ~NSdmaintr;
+	if(reg->statusirqmask & NSdmaintr){
+		reg->statusirqmask &= ~NSdmaintr;
+		wakeup(&dmar);
+	}
 	intrclear(Irqlo, IRQ0sdio);
 }
 
@@ -1006,11 +1006,12 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 	case Qinfo:
 		if(card.valid == 0)
 			error(Enocard);
-		p = buf = smalloc(READSTR);
-		e = p+READSTR;
+		if ((buf = malloc(READSTR)) == nil)
+			error(Enomem);
+		p = buf;
+		e = buf+READSTR;
 		p = cidstr(p, e, &card.cid);
 		p = csdstr(p, e, &card.csd);
-		USED(p);
 		n = readstr(offset, a, n, buf);
 		free(buf);
 		break;

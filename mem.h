@@ -9,6 +9,7 @@
 #define PGROUND(s)	ROUND(s, BY2PG)
 #define BIT(n)		(1<<n)
 #define BITS(a,b)	((1<<(b+1))-(1<<a))
+#define MASK(n)		((1<<(n))-1)		/* could use BITS(0, n-1) */
 
 #define MAXMACH		1			/* max # cpus system can run */
 
@@ -79,13 +80,18 @@
 /*
  * CpControl bits
  */
-#define CpCmmu	(1<<0)	/* M: MMU enable */
-#define CpCalign	(1<<1)	/* A: alignment fault enable */
-#define CpCDcache	(1<<2)	/* C: data cache on */
-#define CpCbe		(1<<7)	/* B: big-endian operation */
-#define CpCsystem	(1<<8)	/* S: system permission */
-#define CpCrom	(1<<9)	/* R: ROM permission */
-#define CpCIcache	(1<<12)	/* I: Instruction Cache on */
-#define CpCaltivec	(1<<13)	/* V: exception vector relocation */
-#define	CpCrrob		(1<<14)	/* RR: cache replacement strategy */
-#define CpCl4		(1<<15)	/* L4: set T bit on PC loads */
+#define CpCmmu		0x00000001	/* M: MMU enable */
+#define CpCalign	0x00000002	/* A: alignment fault enable */
+#define CpCDcache	0x00000004	/* C: data cache on */
+#define CpCwb		0x00000008	/* W: write buffer turned on */
+#define CpCi32		0x00000010	/* P: 32-bit programme space */
+#define CpCd32		0x00000020	/* D: 32-bit data space */
+#define CpCabort	0x00000040	/* L: late abort */
+#define CpCbe		0x00000080	/* B: big-endian operation */
+#define CpCsystem	0x00000100	/* S: system permission */
+#define CpCrom		0x00000200	/* R: ROM permission */
+#define CpCIcache	0x00001000	/* I: Instruction Cache on */
+#define CpCaltivec	0x00002000	/* V: exception vector relocation */
+#define CpCrrob		0x00004000	/* RR: cache replacement strategy */
+#define CpCl4		0x00008000	/* L4: set T bit on PC loads */
+

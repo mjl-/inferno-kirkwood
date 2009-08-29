@@ -3,9 +3,10 @@ echo network [static/dynamic]?
 ip=192.168.12.11
 ipmask=255.255.255.0
 ipgw=192.168.12.12
+
 sys=`{cat /dev/sysname}
 dom=local
-auth=''
+SIGNER=$ip
 fs=''
 dns=''
 
@@ -35,7 +36,7 @@ if{~ $nettype static}{
 	echo 'ip='$ip 'ipmask='$ipmask 'ipgw='$ipgw
 	echo '	sys='$sys
 	echo '	dom='$sys.$dom
-	echo '	auth='$auth
+	echo '	SIGNER='$SIGNER
 	echo '	fs='$fs
 	echo '	dns='$dns
 } >/net/ndb
@@ -43,7 +44,7 @@ if{~ $nettype static}{
 ndb/cs
 ndb/dns -r &
 
-mount -A -v net!$ipgw!styx /n/remote
+mount -A -c -v net!$ipgw!styx /n/remote
 
 #echo -n listen telnet...
 #listen -A net!*!telnet {sh -i >[2=1]} &

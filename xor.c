@@ -6,8 +6,6 @@
 #include	"../port/error.h"
 #include	"io.h"
 
-#define	MASK(x)	((1<<(x))-1)
-
 enum {
 	/* configuration, cfg */
 	ModeMask	= MASK(3),

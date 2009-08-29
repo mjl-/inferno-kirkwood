@@ -76,9 +76,6 @@ archetheraddr(Ether *e, GbeReg *reg, int queue)
 int
 archether(int ctlrno, Ether *e)
 {
-	GbeReg* reg;
-
-	
 	switch(ctlrno) {
 	case 0:
 		strcpy(e->type, "kirkwood");
@@ -113,18 +110,17 @@ archreset(void)
 	
 	/* configure gpios */
 	GPIO0REG->dataout = UsbPWOEValLow;
-//	GPIO1REG->dataout = LedOEValHigh;
-
 	GPIO0REG->dataoutena = UsbPWOELow;
-//	GPIO1REG->dataoutena = LedOEHigh;
 
 	GPIO1REG->blinkena = LedOEValHigh;
+//	GPIO1REG->dataout = LedOEValHigh;
+//	GPIO1REG->dataoutena = LedOEHigh;
 }
 
 void
 archreboot(void)
 {
-	//dcflushall();
+	dcflushall();
 	CPUCSREG->rstout = RstoutSoft;
 	CPUCSREG->softreset = ResetSystem;
 	for(;;)
@@ -159,7 +155,7 @@ archflashreset(int bank, Flash *f)
 	if(bank != 0)
 		return -1;
 	f->type = "nand";
-	f->addr = (void*)PHYSNAND;
+	f->addr = (void*)AddrPhyNand;
 	f->size = 0;	/* done by probe */
 	f->width = 1;
 	f->interleave = 0;

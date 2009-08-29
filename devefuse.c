@@ -68,13 +68,7 @@ efuseclose(Chan* c)
 	USED(c);
 }
 
-static int
-max(int a, int b)
-{
-	if(a > b)
-		return a;
-	return b;
-}
+#define max(a, b) ((a)>(b) ? (a): (b))
 
 static void
 p32(uchar *p, ulong v)
@@ -118,13 +112,13 @@ efuseread(Chan* c, void* a, long n, vlong offset)
 	case Qefuse0:
 		p32(buf+4, reg->lo0);
 		p32(buf+0, reg->hi0);
-		n = max(0, sizeof buf-offset);
+		n = max(0, sizeof buf-(long)offset);
 		memmove(a, buf+offset, n);
 		break;
 	case Qefuse1:
 		p32(buf+4, reg->lo1);
 		p32(buf+0, reg->hi1);
-		n = max(0, sizeof buf-offset);
+		n = max(0, sizeof buf-(long)offset);
 		memmove(a, buf+offset, n);
 		break;
 	default:

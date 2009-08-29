@@ -129,7 +129,6 @@ main(void)
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
 
-	doc("archreset\n");
 	archreset();
 	mmuinit();
 	quotefmtinstall();
@@ -155,8 +154,6 @@ main(void)
 	print("Vita Nuova\n");
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
 	print("kirkwood %s\n\n", conf.devidstr);
-
-	print("scratch memory: %#8.8lux\n", xspanalloc(8*1024, 0x1000, 0));
 
 	userinit();
 	schedinit();
@@ -296,6 +293,7 @@ linkproc(void)
 int
 segflush(void *a, ulong n)
 {
+	USED(a, n);
 	dcflushall(); 
 	icflushall(); 
 

@@ -1,4 +1,4 @@
-#define PAD(next, last)	(((next)-4-(last))/4)
+#define PAD(start, end)	(((end)-4-(start))/4)
 
 enum {
 	Regbase		= 0xf1000000,
@@ -33,6 +33,8 @@ enum {
 	AddrAesdec	= Regbase+0x3ddc0,
 	AddrCrypt	= Regbase+0x3de00,
 
+	AddrUsb		= Regbase+0x50000,
+
 	AddrXore0	= Regbase+0x60800,
 	AddrXore1	= AddrXore0+0x100,
 	AddrXore0p0	= Regbase+0x60810,
@@ -45,8 +47,7 @@ enum {
 
 	AddrSdio	= Regbase+0x90000,
 
-
-	PHYSNAND	= 0xf9000000,	// xxx
+	AddrPhyNand	= 0xf9000000,
 };
 
 enum {
@@ -288,7 +289,7 @@ struct NandfReg
 {
 	ulong	rdparms;
 	ulong	wrparms;
-	ulong	pad0[PAD(0x70, 0x1c)];
+	ulong	pad0[PAD(0x1c, 0x70)];
 	ulong	ctl;
 };
 
@@ -334,7 +335,7 @@ struct HashReg
 	ulong	pad1;
 	ulong	bitcountlo;
 	ulong	bitcounthi;	/* 0x3dd24 */
-	ulong	pad2[PAD(0x3dd38, 0x3dd24)];
+	ulong	pad2[PAD(0x3dd24, 0x3dd38)];
 	ulong	data;		/* 0x3dd38 */
 };
 
@@ -346,7 +347,7 @@ struct CryptReg
 	ulong	descr;
 	ulong	cfg;
 	ulong	status;	/* 0x3de0c */
-	ulong	pad0[PAD(0x3de20, 0x3de0c)];
+	ulong	pad0[PAD(0x3de0c, 0x3de20)];
 	ulong	irq;	/* 0x3de20 */
 	ulong	irqmask;
 };
@@ -366,10 +367,10 @@ struct TdmaReg
 	ulong	ctl;
 	ulong	pad4[3];
 	ulong	curdescr;	/* 0x30870 */
-	ulong	pad5[PAD(0x308c8, 0x30870)];
+	ulong	pad5[PAD(0x30870, 0x308c8)];
 	ulong	irqerr;		/* 0x308c8 */
 	ulong	irqerrmask;	/* 0x308cc */
-	ulong	pad6[PAD(0x30a00, 0x308cc)];
+	ulong	pad6[PAD(0x308cc, 0x30a00)];
 	struct	{
 		ulong	bar;
 		ulong	winctl;
@@ -386,25 +387,25 @@ struct GbeReg
 	ulong	smi;
 	ulong	euda;
 	ulong	eudid;
-	ulong	_pad0[PAD(0x72080, 0x7200c)];
+	ulong	_pad0[PAD(0x7200c, 0x72080)];
 	ulong	euirq;
 	ulong	euirqmask;
-	ulong	_pad1[PAD(0x72094, 0x72084)];
+	ulong	_pad1[PAD(0x72084, 0x72094)];
 	ulong	euea;
 	ulong	euiae;
-	ulong	_pad2[PAD(0x720b0, 0x72098)];
+	ulong	_pad2[PAD(0x72098, 0x720b0)];
 	ulong	euc;
-	ulong	_pad3[PAD(0x72200, 0x720b0)];
+	ulong	_pad3[PAD(0x720b0, 0x72200)];
 	struct {
 		ulong	base;
 		ulong	size;
 	} base[6];
-	ulong	_pad4[PAD(0x72280, 0x7222c)];
+	ulong	_pad4[PAD(0x7222c, 0x72280)];
 	ulong	harr[4];
 	ulong	bare;
 	ulong	epap;
 
-	ulong	_pad5[PAD(0x72400, 0x72294)];
+	ulong	_pad5[PAD(0x72294, 0x72400)];
 	ulong	portcfg;
 	ulong	portcfgx;
 	ulong	mii;
@@ -435,24 +436,24 @@ struct GbeReg
 	ulong	pxofc;
 	ulong	_pad12[2];
 	ulong	piae;
-	ulong	_pad13[PAD(0x724bc, 0x72494)];
+	ulong	_pad13[PAD(0x72494, 0x724bc)];
 	ulong	etherprio;
-	ulong	_pad14[PAD(0x724dc, 0x724bc)];
+	ulong	_pad14[PAD(0x724bc, 0x724dc)];
 	ulong	tqfpc;
 	ulong	pttbrc;
 	ulong	tqc1;
 	ulong	pmtu;
 	ulong	pmtbs;
-	ulong	_pad15[PAD(0x72600, 0x724ec)];
+	ulong	_pad15[PAD(0x724ec, 0x72600)];
 	struct {
 		ulong	_pad[3];
 		ulong	r;
 	} crdp[8];
 	ulong	rqc;
 	ulong	tcsdp;
-	ulong	_pad16[PAD(0x726c0, 0x72684)];
+	ulong	_pad16[PAD(0x72684, 0x726c0)];
 	ulong	tcqdp[8];
-	ulong	_pad17[PAD(0x72700, 0x726dc)];
+	ulong	_pad17[PAD(0x726dc, 0x72700)];
 	struct {
 		ulong	tbctr;
 		ulong	tbcfg;
@@ -460,7 +461,7 @@ struct GbeReg
 		ulong	_pad;
 	} tq[8];
 	ulong	pttbc;
-	ulong	_pad18[PAD(0x727a8, 0x72780)];
+	ulong	_pad18[PAD(0x72780, 0x727a8)];
 	ulong	ipg2;
 	ulong	_pad19[3];
 	ulong	ipg3;
@@ -471,7 +472,7 @@ struct GbeReg
 	ulong	_pad21;
 	ulong	ts;		/* 0x727d0 */
 
-	ulong	_pad22[PAD(0x73000, 0x727d0)];
+	ulong	_pad22[PAD(0x727d0, 0x73000)];
 	ulong	rxoctetshi;
 	ulong	rxoctetslo;
 	ulong	badrxoctets;
@@ -505,7 +506,7 @@ struct GbeReg
 	ulong	collisions;
 	ulong	latecollisions;		/* 0x7307c */
 
-	ulong	_pad23[PAD(0x73400, 0x7307c)];
+	ulong	_pad23[PAD(0x7307c, 0x73400)];
 	ulong	dfsmt[64];	/* 0x73400 */
 	ulong	dfomt[64];
 	ulong	dfut[4];
@@ -545,7 +546,7 @@ struct SdioReg
 	ulong	acmd12arghi;
 	ulong	acmd12idx;
 	ulong	acmdrsp[3];
-	ulong	pad1[PAD(0x90100, 0x90098)];
+	ulong	pad1[PAD(0x90098, 0x90100)];
 	ulong	mbusctllo;
 	ulong	mbusctlhi;
 	struct {
@@ -562,7 +563,7 @@ typedef struct MppReg MppReg;
 struct MppReg
 {
 	ulong	ctl[7];
-	ulong	pad0[PAD(0x30, 0x18)];
+	ulong	pad0[PAD(0x18, 0x30)];
 	ulong	sampatrst;
 };
 
@@ -591,7 +592,7 @@ struct WinReg
 		ulong	remaplo;
 		ulong	remaphi;
 	} w[7];
-	ulong	pad0[PAD(0x80, 0x74)];
+	ulong	pad0[PAD(0x74, 0x80)];
 	ulong	intbase;
 };
 
@@ -600,7 +601,7 @@ typedef struct EfuseReg EfuseReg;
 struct EfuseReg
 {
 	ulong	protection;
-	ulong	pad0[PAD(0x100a4, 0x1008c)];
+	ulong	pad0[PAD(0x1008c, 0x100a4)];
 	ulong	lo0, hi0;
 	ulong	lo1, hi1;
 	ulong	ctl;
@@ -612,7 +613,7 @@ typedef struct XoreReg XoreReg;
 struct XoreReg
 {
 	ulong	xechar;		/* 0x60800 */
-	ulong	pad0[PAD(0x60830, 0x60800)];
+	ulong	pad0[PAD(0x60800, 0x60830)];
 	ulong	irq;		/* 0x60830 */
 	ulong	pad1[3];
 	ulong	irqmask;	/* 0x60840 */
@@ -620,11 +621,11 @@ struct XoreReg
 	ulong	errorcause;	/* 0x60850 */
 	ulong	pad3[3];
 	ulong	erroraddr;	/* 0x60860 */
-	ulong	pad4[PAD(0x60a50, 0x60860)];
+	ulong	pad4[PAD(0x60860, 0x60a50)];
 	ulong	bar[8];		/* 0x60a50 */
 	ulong	sizemask[8];	/* 0x60a70 */
 	ulong	harr[4];	/* 0x60a90 */
-	ulong	pad7[PAD(0x60ae0, 0x60a90+3*4)];
+	ulong	pad7[PAD(0x60a90+3*4, 0x60ae0)];
 	ulong	initvallo;	/* 0x60ae0 */
 	ulong	initvalhi;	/* 0x60ae4 */
 };
@@ -639,15 +640,15 @@ struct XorReg
 	ulong	cfg;		/* 0x60810 */
 	ulong	pad0[3];
 	ulong	act;		/* 0x60820 */
-	ulong	pad1[PAD(0x60a00, 0x60820)];
+	ulong	pad1[PAD(0x60820, 0x60a00)];
 	ulong	nextdescr;	/* 0x60a00 */
 	ulong	pad2[3];
 	ulong	curdescr;	/* 0x60a10 */
 	ulong	pad3[3];
 	ulong	bytecount;	/* 0x60a20 */
-	ulong	pad4[PAD(0x60a40, 0x60a20)];
+	ulong	pad4[PAD(0x60a20, 0x60a40)];
 	ulong	winctl;		/* 0x60a40 */
-	ulong	pad5[PAD(0x60aa0, 0x60a40)];
+	ulong	pad5[PAD(0x60a40, 0x60aa0)];
 	ulong	aoctl;		/* 0x60aa0 */
 	ulong	pad6[3];
 	ulong	dest;		/* 0x60ab0 */
@@ -702,5 +703,75 @@ struct SDramdReg
 		ulong	base;
 		ulong	size;
 	} win[4];
+};
+
+#define USBREG	((UsbReg*)AddrUsb)
+typedef struct UsbReg UsbReg;
+struct UsbReg
+{
+	/* USB 2.0 HS OTG core ref (see FS pag. 631) */
+	ulong	id;
+	ulong	hwgeneral;
+	ulong	hwhost;
+	ulong	hwdevice;
+	ulong	hwtxbuf;
+	ulong	hwrxbuf;
+	ulong	hwtttxbuf;
+	ulong	hwttrxbuf;
+	ulong   pad0[PAD(0x5001c, 0x50100)];
+	uchar	caplength;
+	uchar	pad1[1];
+	ushort	hciversion;
+	ulong	hcsparams;
+	ulong	hccparams;
+	ulong   pad2[PAD(0x50108, 0x50120)];
+	ushort	dciversion;
+	ushort	pad3[1];
+	ulong	dccparams;	
+	ulong   pad4[PAD(0x50124, 0x50140)];
+	ulong	usbcmd;
+	ulong	usbsts;
+	ulong	usbintr;
+	ulong	frindex;
+	ulong	pad5[PAD(0x5014c, 0x50154)];
+	ulong	devaddr;
+	ulong	endptaddr;
+	ulong	ttctrl;
+	ulong	burstsz;
+	ulong	txfilltun;
+	ulong	txttfilltun;
+	ulong	pad6[PAD(0x50168, 0x50180)];
+	ulong	configflag;
+	ulong	portsc1;
+	ulong	pad7[PAD(0x50184, 0x501a4)];
+	ulong	otgsc;
+	ulong	usbmode;
+	struct {
+		ulong	setupstat;
+		ulong	prime;
+		ulong	flush;
+		ulong	status;
+		ulong	complete;
+		ulong	ctrl[4];
+	} endpt;
+
+	/* USB 2.0 see FS pag. 625 */
+	ulong   pad7[PAD(0x501cc, 0x50300)];
+	ulong	brdgctl;
+	ulong   pad8[PAD(0x50300, 0x50310)];
+	struct {
+		ulong	intr;
+		ulong 	intrmask;
+		ulong	pad0;
+		ulong	erraddr;
+	} brdg;
+	struct	{
+		ulong	ctl;
+		ulong	base;
+		ulong	pad0[2];
+	} win[4];
+	ulong	phyconf;
+	ulong   pad9[PAD(0x50360, 0x50400)];
+	ulong	power;
 };
 

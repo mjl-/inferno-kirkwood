@@ -101,6 +101,7 @@ root
 	/fd	/
 	/keydb	/
 	/net	/
+	/net.alt	/
 	/nvfs	/
 	/prog	/
 	/tmp	/
@@ -125,6 +126,17 @@ root
 	/dis/lib/string.dis
 	/dis/lib/daytime.dis
 	/dis/lib/filepat.dis
+
+	/n/remote
+	/n/local
+	/n/client
+	/n/rdbg
+	/n/dump
+	/n/disk
+	/n/kfs
+	
+# Authentication
+	/nvfs/default	/usr/inferno/keyring/default
 
 # For development work:
 	/dis/sh.dis
@@ -216,21 +228,9 @@ root
 	/lib/ndb/inferno
 	/lib/ndb/local
 
-	/usr/inferno
-	/usr/inferno/namespace
-	/usr/inferno/keyring
-	/usr/inferno/lib
-
+	/usr
+	/man
 	/mnt/keys
 
-	/n/remote
-	/n/local
-	/n/client
-	/n/rdbg
-	/n/dump
-	/n/disk
-	/n/kfs
-	
 	/init	/os/kirkwood/misc/init
 	/netrc	/os/kirkwood/misc/netrc
-	/kexec	/os/kirkwood/misc/kexec

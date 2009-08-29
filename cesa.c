@@ -24,7 +24,6 @@ static QLock deslock;
 static QLock accellock;
 
 
-#define MASK(v)	((1<<(v))-1)
 enum {
 	/* aes cmd */
 	AESkeymask	= 3<<0,
@@ -236,13 +235,6 @@ swap(ulong v)
 	return g32le(buf);
 }
 
-static void*
-roundup(uchar *p, int n)
-{
-	return (void*)(((ulong)p+n-1)&~(n-1));
-}
-
-
 static void
 cryptintr(Ureg *, void *)
 {
@@ -291,7 +283,7 @@ void
 cesatest(void)
 {
 	uchar descr[3*sizeof (TDescr)+TDescralign-1];
-	TDescr *d0 = roundup(descr, TDescralign);
+	TDescr *d0 = (void*)ROUND((ulong)descr, TDescralign);
 	TDescr *d1 = d0+1;
 	TDescr *d2 = d1+1;
 	uchar *src, *dst;
