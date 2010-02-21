@@ -48,3 +48,4 @@ mount -A -c -v net!$ipgw!styx /n/remote
 
 #echo -n listen telnet...
 #listen -A net!*!telnet {sh -i >[2=1]} &
+# note: do not use telnet with option negotiation to connect, they confuse sh.  if you do, try typing a quote and hit return.

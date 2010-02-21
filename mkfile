@@ -12,8 +12,7 @@ INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
 <| $SHELLNAME ../port/mkdevlist $CONF
 
 KTZERO=0x8000
-# KTLOAD=KTZERO-0x20 (size of a.out header)
-KLOAD=`echo $KTZERO | awk '{printf "%#x", strtonum($0) - 32}'`
+KLOAD=0x7fe0  # $KTZERO-0x20 (size of a.out header)
 
 OBJ=\
 	l.$O\

@@ -59,7 +59,7 @@ enum {
 	HClsbfirst		= 1<<4,
 	HCdatawidth4		= 1<<9,
 	HChighspeed		= 1<<10,
-#define HCtimeout(x)	((x)<<11)
+#define HCtimeout(x)	(((x) & MASK(4))<<11)
 	HCtimeoutenable		= 1<<15,
 
 	/* swreset */
@@ -200,8 +200,13 @@ Dirtab sdiotab[]={
 	"sdio",		{Qdata},		0,	0666,
 };
 
-
-#define min(a, b) ((a)<(b)? (a): (b))
+static int
+min(int a, int b)
+{
+	if(a < b)
+		return a;
+	return b;
+}
 
 static ulong
 bits(uchar *p, int msb, int lsb)
@@ -446,7 +451,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 
 	if(cmd == 17 || cmd == 18) {
 		/* wait for dma interrupt that signals completion */
-		tsleep(&dmar, dmafinished, nil, 250);
+		tsleep(&dmar, dmafinished, nil, 5000);
 
 		need = NScmdcomplete|NSdmaintr;
 		if((reg->status & need) != need || (reg->status & (NSerror|NSunexpresp)) != 0) {
@@ -801,9 +806,8 @@ sdinit(void)
 	if(parsecsd(&card.csd, card.resp) < 0)
 		errorsd("bad csd register");
 
-	if(card.csd.version == 0 && card.sdhc) {
+	if(card.csd.version == 0) {
 		card.bs = 1<<card.csd.readblocklength;
-
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
 		card.size *= 1<<card.csd.readblocklength;
@@ -856,15 +860,12 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 
 	/* xxx we should cover this cases with a buffer, and then use the same code to allow non-sector-aligned reads? */
 	if((ulong)a % 4 != 0)
-		error("sdio: a not word aligned");
+		error("bad buffer alignment...");
 
-	if(n % card.bs != 0)
-		error("sdio: n not block aligned");
 	if(offset % card.bs != 0)
-		error("sdio: offset not block aligned");
-
-	if(waserror())
-		nexterror();
+		error("not sector aligned");
+	if(n % card.bs != 0)
+		error("not multiple of sector size");
 
 	reg->dmaaddrlo = (ulong)a & MASK(16);
 	reg->dmaaddrhi = ((ulong)a>>16) & MASK(16);
@@ -874,10 +875,12 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 		arg = offset/card.bs;
 	else
 		arg = offset;
+	//tsleep(&up->sleep, return0, nil, 250);
+	dprint("sdio, a %#lux, dmaddrlo %#lux dmaadrhi %#lux blksize %lud blkcount %lud cmdarg %#lux\n",
+		a, (ulong)a & MASK(16), ((ulong)a>>16) & MASK(16), card.bs, n/card.bs, arg);
+	//tsleep(&up->sleep, return0, nil, 250);
 	if(sdcmd(&card, 18, arg) < 0)
-		errorsd("reading");
-
-	poperror();
+		errorsd(iswrite ? "writing" : "reading");
 
 	return n;
 }
@@ -912,10 +915,8 @@ sdiointr(Ureg*, void*)
 	 * don't clear the status, just make sure we are not called again
 	 * before this interrupt is handled.
 	 */
-	if(reg->statusirqmask & NSdmaintr){
-		reg->statusirqmask &= ~NSdmaintr;
-		wakeup(&dmar);
-	}
+	wakeup(&dmar);
+	reg->statusirqmask &= ~NSdmaintr;
 	intrclear(Irqlo, IRQ0sdio);
 }
 
@@ -944,7 +945,7 @@ sdioinit(void)
 	sdclock(25*1000*1000);
 
 	/* configure host controller */
-	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15); // xxx HCtimeoutenable;
+	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15)|HCtimeoutenable;
 
 	/* clear status */
 	reg->status = ~0;
@@ -957,8 +958,6 @@ sdioinit(void)
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
 	reg->statusirqmask = 0;
 	reg->errstatusirqmask = 0;
-
-	sdinit();
 }
 
 static Chan*
@@ -1006,17 +1005,17 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 	case Qinfo:
 		if(card.valid == 0)
 			error(Enocard);
-		if ((buf = malloc(READSTR)) == nil)
-			error(Enomem);
-		p = buf;
-		e = buf+READSTR;
+		p = buf = smalloc(READSTR);
+		e = p+READSTR;
 		p = cidstr(p, e, &card.cid);
 		p = csdstr(p, e, &card.csd);
+		USED(p);
 		n = readstr(offset, a, n, buf);
 		free(buf);
 		break;
 	case Qdata:
 		n = sdio(a, n, offset, 0);
+		dprint("returning %ld bytes\n", n);
 		break;
 	default:
 		n = 0;

@@ -87,8 +87,7 @@ code
 	int cflag = 0;
 
 	int consoleprint = 1;
-	char debug_keys = 1;
-	char panicreset = 1;
+	int panicreset = 0;
 
 init
 	sheevainit
@@ -100,32 +99,13 @@ root
 	/env	/
 	/fd	/
 	/keydb	/
+	/n	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
 	/prog	/
 	/tmp	/
 	/osinit.dis
-
-# intialisation
-# dos file system
-	/dis/dossrv.dis
-	/dis/disk/format.dis
-
-# kfs file system
-	/dis/disk/kfs.dis
-	/dis/disk/kfscmd.dis
-
-# dhcp
-	/dis/lib/dhcpclient.dis
-	/dis/lib/ip.dis
-
-# used by file systems and commands
-	/dis/lib/arg.dis
-	/dis/lib/styx.dis
-	/dis/lib/string.dis
-	/dis/lib/daytime.dis
-	/dis/lib/filepat.dis
 
 	/n/remote
 	/n/local
@@ -134,53 +114,38 @@ root
 	/n/dump
 	/n/disk
 	/n/kfs
-	
-# Authentication
-	/nvfs/default	/usr/inferno/keyring/default
 
-# For development work:
-	/dis/sh.dis
-	/dis/ls.dis
-	/dis/cat.dis
 	/dis/bind.dis
-	/dis/mount.dis
-	/dis/pwd.dis
-	/dis/echo.dis
-	/dis/cd.dis
-	/dis/xd.dis
-	/dis/cp.dis
-	/dis/kill.dis
-	/dis/mkdir.dis
-	/dis/rm.dis
-	/dis/p.dis
-	/dis/ps.dis
-	/dis/unmount.dis
-	/dis/ns.dis
-	/dis/lib/readdir.dis
-	/dis/lib/workdir.dis
-	/dis/lib/daytime.dis
-	/dis/lib/auth.dis
-	/dis/lib/ssl.dis
-	/dis/lib/bufio.dis
-	/dis/lib/string.dis
-
-# Extras:
 	/dis/calc.dis
+	/dis/cat.dis
+	/dis/cd.dis
 	/dis/date.dis
 	/dis/dd.dis
 	/dis/dial.dis
+	/dis/echo.dis
 	/dis/ed.dis
 	/dis/export.dis
 	/dis/grep.dis
 	/dis/import.dis
+	/dis/kill.dis
 	/dis/listen.dis
+	/dis/ls.dis
 	/dis/mc.dis
 	/dis/md5sum.dis
 	/dis/mdb.dis
 	/dis/memfs.dis
+	/dis/mkdir.dis
 	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/mv.dis
+	/dis/ns.dis
+	/dis/p.dis
+	/dis/ps.dis
+	/dis/pwd.dis
 	/dis/read.dis
+	/dis/rm.dis
 	/dis/sed.dis
+	/dis/sh.dis
 	/dis/sha1sum.dis
 	/dis/sleep.dis
 	/dis/styxlisten.dis
@@ -188,6 +153,7 @@ root
 	/dis/telnet.dis
 	/dis/time.dis
 	/dis/touch.dis
+	/dis/unmount.dis
 	/dis/xd.dis
 	/dis/dossrv.dis
 	/dis/zeros.dis
@@ -202,6 +168,9 @@ root
 
 	/dis/lib/arg.dis
 	/dis/lib/attrdb.dis
+	/dis/lib/auth.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
 	/dis/lib/dhcpclient.dis
 	/dis/lib/dial.dis
 	/dis/lib/dis.dis
@@ -214,7 +183,10 @@ root
 	/dis/lib/nametree.dis
 	/dis/lib/rand.dis
 	/dis/lib/random.dis
+	/dis/lib/readdir.dis
 	/dis/lib/regex.dis
+	/dis/lib/ssl.dis
+	/dis/lib/string.dis
 	/dis/lib/styx.dis
 	/dis/lib/styxconv/ostyx.dis
 	/dis/lib/styxconv/styxconv.dis
@@ -222,6 +194,7 @@ root
 	/dis/lib/styxpersist.dis
 	/dis/lib/styxservers.dis
 	/dis/lib/timers.dis
+	/dis/lib/workdir.dis
 
 	/lib/ndb/common
 	/lib/ndb/dns
