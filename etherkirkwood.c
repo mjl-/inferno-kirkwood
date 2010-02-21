@@ -25,6 +25,8 @@
  * - multiple receive queues (e.g. tcp,udp,ethernet priority,other), possibly with priority
  */
 
+extern void	archetheraddr(Ether *e, GbeReg *reg, int queue);
+
 static struct {
 	Lock;
 	Block	*head;

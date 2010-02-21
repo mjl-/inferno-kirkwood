@@ -159,7 +159,6 @@ kw_break(Uart* uart, int ms)
 	if(ms <= 0)
 		ms = 200;
 
-	ctlr = uart->regs;
 	regs->lcr |= LCRbreak;
 	tsleep(&up->sleep, return0, 0, ms);
 	regs->lcr &= ~LCRbreak;
@@ -426,27 +425,10 @@ void
 uartconsole(void)
 {
 	Uart *uart;
-	int n;
-	char *cmd, *p;
 
-//	if((p = getconf("console")) == nil){
-//		return;
-//	n = strtoul(p, &cmd, 0);
-//	if(p == cmd)
-//		return;
-
-	switch(n){
-	default:
-		return;
-	case 0:
-		uart = &kirkwooduart[0];
-		break;
-	}
-
+	uart = &kirkwooduart[0];
 	(*uart->phys->enable)(uart, 0);
 	uartctl(uart, "b115200 l8 pn s1");
-	if(cmd && *cmd != '\0')
-		uartctl(uart, cmd);
 
 	consuart = uart;
 	uart->console = 1;

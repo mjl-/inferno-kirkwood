@@ -254,7 +254,6 @@ dflt(Ureg *ureg, ulong far)
 void
 trap(Ureg *ureg)
 {
-	ulong far, fsr;
 	int rem, t, itype;
 
 	if(up != nil)
@@ -340,7 +339,8 @@ trap(Ureg *ureg)
 		/* FALL THROUGH */
 	case PsrMabt+1:			/* Data abort */
 /* xxx we don't do mmu, remove this? */
-if(0) {
+/*
+	ulong far, fsr;
 		fsr = mmugetfsr();
 		far = mmugetfar();
 		if(fsr & (1<<9)) {
@@ -354,7 +354,7 @@ if(0) {
 			faultarm(ureg, far);
 		}
 		iprint("Data Abort: FSR %8.8luX FAR %8.8luX\n", fsr, far); xdelay(1);
-}
+*/
 		/* FALL THROUGH */
 
 	default:				/* ??? */
