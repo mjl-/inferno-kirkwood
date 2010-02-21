@@ -45,6 +45,10 @@ enum {
 	AddrGbe0	= Regbase+0x72000,
 	AddrGbe1	= Regbase+0x76000,
 
+	AddrSatahc	= Regbase+0x80000,
+	AddrSata0	= Regbase+0x82000,
+	AddrSata1	= Regbase+0x84000,
+
 	AddrSdio	= Regbase+0x90000,
 
 	AddrPhyNand	= 0xf9000000,
@@ -775,3 +779,101 @@ struct UsbReg
 	ulong	power;
 };
 
+
+#define SATAHCREG ((SatahcReg*)AddrSatahc)
+typedef struct SatahcReg SatahcReg;
+struct SatahcReg
+{
+	ulong	cfg,
+		qout,
+		qin,
+		intrcoalesc,
+		intrtime,
+		intr,
+		_pad0,
+		_pad1,
+		intrmain,
+		intrmainmask,
+		_pad2,
+		ledcfg;
+	struct	{
+		ulong	ctl;
+		ulong	base;
+		ulong	_pad0[2];
+	} win[4];
+};
+
+#define SATA0REG ((SataReg*)AddrSata0)
+#define SATA1REG ((SataReg*)AddrSata1)
+typedef struct SataReg SataReg;
+struct SataReg
+{
+	ulong	cfg,
+		_pad0,
+		intre,
+		intremask,
+		reqbasehi,
+		reqin,
+		reqout,
+		respbasehi,
+		respin,
+		respout,
+		cmd,
+		_pad1,
+		status,
+		iordytimeout,
+		_pad2,
+		_pad3,
+		cmddelaythr;
+	uchar	_pad4[0x50-0x44];
+	ulong	ifccfg,
+		pllcfg;
+	uchar	_pad5[0x60-0x58];
+	ulong	haltcond;
+	uchar	_pad6[0x94-0x64];
+	ulong	cmdqstatus;
+
+	uchar	_pad7[0x224-0x98];
+	struct {
+		ulong	cmd,
+			status,
+			dtlo,
+			dthi,
+			drlo,
+			drhi;
+	} bdma;	/* basic dma */
+
+	ulong	_pad8[0x300-0x23c];
+
+	ulong	sstatus,
+		serr,
+		sctl,
+		ltmode,
+		phym3,
+		phym4;
+	ulong	_pad9[5];
+	ulong	phym1,
+		phym2,
+		bistctl,
+		bistw1,
+		bistw2,
+		serrintrmask,
+		ifcctl,
+		ifctestctl,
+		ifcstatus;
+	ulong	_pad10[3];
+	ulong	vendor;
+	ulong	fiscfg,
+		fisintr,
+		fisintrmask,
+		_pad11;
+	ulong	fisw[7];
+	ulong	_pad12[3];
+	ulong	phy9gen2,
+		phy9gen1,
+		phycfg,
+		phyctl,
+		phym10,
+		_pad13,
+		phym12;
+};
