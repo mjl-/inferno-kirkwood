@@ -4,6 +4,8 @@ boots, uses uart as console, rtc, runs dis programs, basic network
 support (dhcp & mount working), might read a some sd cards.
 
 next steps:
+- better nand support
+- delay/microdelay calibration
 - find problems/crashes
 - more sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
 - flush data cache around dma

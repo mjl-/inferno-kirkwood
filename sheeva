@@ -35,7 +35,8 @@ link
 	etherkirkwood	ethermii
 	xor
 	cesa
-	flashnand	nand
+#	flashnand	nand
+	kwnand
 
 lib
 	interp

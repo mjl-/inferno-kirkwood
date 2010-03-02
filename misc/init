@@ -6,31 +6,36 @@ bind -a '#o' /dev	# sdio
 bind -a '#φ' /dev	# efuse
 bind -a '#T' /dev	# sheeva
 bind -a '#B' /dev	# boot
+bind -a '#F' /dev	# flash
+
+echo add boot	0x0 0x100000 >/dev/flash/flashctl
+echo add kernel	0x100000 0x500000 >/dev/flash/flashctl
+echo add fs	0x500000 0x20000000 >/dev/flash/flashctl
 
 mount {mntgen} /n
 memfs /tmp
 
-echo static | run /netrc
+#echo dynamic | run /netrc
 
 echo watchdog off > /dev/sheevactl
 echo debug off > /dev/sdioctl
-echo init > /dev/sdioctl
-cat /dev/sdioctl
+#echo init > /dev/sdioctl
+#cat /dev/sdioctl
 
-echo dossrv
-dossrv  -f /dev/sdio -m /n/dos
+#echo dossrv
+#dossrv  -f /dev/sdio -m /n/dos
 
-bind -b /n/dos/dis /dis
-bind -b /n/dos/keydb /keydb
-bind -b /n/dos/nvfs /nvfs
-bind -b /n/dos/usr /usr
-bind -b /n/dos/man /man
+#bind -b /n/dos/dis /dis
+#bind -b /n/dos/keydb /keydb
+#bind -b /n/dos/nvfs /nvfs
+#bind -b /n/dos/usr /usr
+#bind -b /n/dos/man /man
 
 # TODO get nvkey from efuse
-echo svc
-run /dis/svc/auth
-run /dis/svc/styx
-run /dis/svc/rstyx
+#echo svc
+#run /dis/svc/auth
+#run /dis/svc/styx
+#run /dis/svc/rstyx
 
 while {} {
 	echo shell...
