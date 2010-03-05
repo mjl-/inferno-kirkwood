@@ -316,6 +316,9 @@ kprocchild(Proc *p, void (*func)(void*), void *arg)
 void
 idlehands(void)
 {
+	/* sdram self-refresh mode.  starts after 256 cycles, until next memory access. */
+	SDRAMCREG->oper = 0x7;
+
 	idle();
 }
 

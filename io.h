@@ -293,7 +293,7 @@ struct NandfReg
 {
 	ulong	rdparms;
 	ulong	wrparms;
-	ulong	pad0[PAD(0x1c, 0x70)];
+	uchar	_pad0[0x70-0x20];
 	ulong	ctl;
 };
 
@@ -661,42 +661,39 @@ struct XorReg
 };
 
 #define SDRAMCREG	((SDramcReg*)AddrSDramc)
-typedef struct SDramacReg SDramcReg;
+typedef struct SDramcReg SDramcReg;
 struct SDramcReg
 {
-	ulong ctl;
-	ulong ddrctllo;
-	struct {
-		ulong lo;
-		ulong hi;
-	} time;
-	ulong addrctl;
-	ulong opagectl;
-	ulong oper;
-	ulong mode;
-	ulong extmode;
-	ulong ddrctlhi;
-	ulong ddr2timelo;
-	ulong operctl;
-	struct {
-		ulong lo;
-		ulong hi;
-	} mbusctl;
-	ulong mbustimeout;
-	ulong ddrtimehi;
-	ulong sdinitctl;
-	ulong extsdmode1;
-	ulong extsdmode2;
-	struct {
-		ulong lo;
-		ulong hi;
-	} odtctl;
-	ulong ddrodtctl;
-	ulong rbuffsel;
+	ulong	ctl;
+	ulong	ddrctllo;
+	ulong	timinglo;
+	ulong	timinghi;
+	ulong	addrctl;
+	ulong	opagectl;
+	ulong	oper;
+	ulong	mode;
+	ulong	extmode;
+	ulong	ddrctlhi;
+	ulong	ddr2timelo;
+	ulong	operctl;
+	ulong	mbusctllo;
+	ulong	mbusctlhi;
+	ulong	mbustimeout;
+	uchar	pad0[0x7c-0x3c];
+	ulong	ddrtimehi;
+	ulong	sdinitctl;
+	ulong	pad1[2];
+	ulong	extsdmode1;
+	ulong	extsdmode2;
+	ulong	odtctllo;
+	ulong	odtctlhi;
+	ulong	ddrodtctl;
+	ulong	rbuffsel;
 
-	ulong accalib;
-	ulong dqcalib;
-	ulong dqscalib;
+	uchar	pad2[0xc0-0xa8];
+	ulong	accalib;
+	ulong	dqcalib;
+	ulong	dqscalib;
 };
 
 #define SDRAMDREG	((SDramdReg*)AddrSDramd)
@@ -777,103 +774,4 @@ struct UsbReg
 	ulong	phyconf;
 	ulong   pad9[PAD(0x50360, 0x50400)];
 	ulong	power;
-};
-
-
-#define SATAHCREG ((SatahcReg*)AddrSatahc)
-typedef struct SatahcReg SatahcReg;
-struct SatahcReg
-{
-	ulong	cfg,
-		qout,
-		qin,
-		intrcoalesc,
-		intrtime,
-		intr,
-		_pad0,
-		_pad1,
-		intrmain,
-		intrmainmask,
-		_pad2,
-		ledcfg;
-	struct	{
-		ulong	ctl;
-		ulong	base;
-		ulong	_pad0[2];
-	} win[4];
-};
-
-#define SATA0REG ((SataReg*)AddrSata0)
-#define SATA1REG ((SataReg*)AddrSata1)
-typedef struct SataReg SataReg;
-struct SataReg
-{
-	ulong	cfg,
-		_pad0,
-		intre,
-		intremask,
-		reqbasehi,
-		reqin,
-		reqout,
-		respbasehi,
-		respin,
-		respout,
-		cmd,
-		_pad1,
-		status,
-		iordytimeout,
-		_pad2,
-		_pad3,
-		cmddelaythr;
-	uchar	_pad4[0x50-0x44];
-	ulong	ifccfg,
-		pllcfg;
-	uchar	_pad5[0x60-0x58];
-	ulong	haltcond;
-	uchar	_pad6[0x94-0x64];
-	ulong	cmdqstatus;
-
-	uchar	_pad7[0x224-0x98];
-	struct {
-		ulong	cmd,
-			status,
-			dtlo,
-			dthi,
-			drlo,
-			drhi;
-	} bdma;	/* basic dma */
-
-	ulong	_pad8[0x300-0x23c];
-
-	ulong	sstatus,
-		serr,
-		sctl,
-		ltmode,
-		phym3,
-		phym4;
-	ulong	_pad9[5];
-	ulong	phym1,
-		phym2,
-		bistctl,
-		bistw1,
-		bistw2,
-		serrintrmask,
-		ifcctl,
-		ifctestctl,
-		ifcstatus;
-	ulong	_pad10[3];
-	ulong	vendor;
-	ulong	fiscfg,
-		fisintr,
-		fisintrmask,
-		_pad11;
-	ulong	fisw[7];
-	ulong	_pad12[3];
-	ulong	phy9gen2,
-		phy9gen1,
-		phycfg,
-		phyctl,
-		phym10,
-		_pad13,
-		phym12;
 };
