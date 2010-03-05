@@ -49,6 +49,7 @@ enum {
 /* vendors */
 enum {
 	Hynix		= 0xad,
+	Samsung		= 0xec,
 };
 
 /* chips */
@@ -65,6 +66,7 @@ struct Nandtab {
 };
 Nandtab nandtab[] = {
 	{Hynix,		Hy27UF084G2M,	512*1024*1024,	"Hy27UF084G2M"},
+	{Samsung,	0xdc,		512*1024*1024,	"Samsung 2Gb"},
 };
 
 /* commands */
@@ -184,10 +186,6 @@ idchip(Flash *f)
 	nandunclaim(f);
 
 	//iprint("man=%#ux device=%#ux id3=%#ux id4=%ux\n", maker, device, id3, id4);
-	if(maker != Hynix) {
-		print("nand: unknown vendor %#ux\n", maker);
-		return -1;
-	}
 	for(i = 0; i < nelem(nandtab); i++) {
 		chip = &nandtab[i];
 		if(chip->vid == maker && chip->did == device) {
