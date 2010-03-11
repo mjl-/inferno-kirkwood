@@ -107,12 +107,15 @@ archreset(void)
 
 	/* watchdog disabled */
  	TIMERREG->ctl &= ~TmrWDenable;
+
+	/* physhutdown first port to save power, sheevaplug esata uses second port. */
+	SATA0REG->ifccfg |= 1<<9;
 	
 	/* configure gpios */
-	GPIO0REG->dataout = UsbPWOEValLow;
-	GPIO0REG->dataoutena = UsbPWOELow;
+//	GPIO0REG->dataout = UsbPWOEValLow;
+//	GPIO0REG->dataoutena = UsbPWOELow;
 
-	GPIO1REG->blinkena = LedOEValHigh;
+//	GPIO1REG->blinkena = LedOEValHigh;
 //	GPIO1REG->dataout = LedOEValHigh;
 //	GPIO1REG->dataoutena = LedOEHigh;
 }

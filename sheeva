@@ -21,6 +21,7 @@ dev
 	sdio
 	sheeva
 	efuse
+	sata
 
 ip
 	il

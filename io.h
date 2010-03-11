@@ -48,6 +48,8 @@ enum {
 	AddrSatahc	= Regbase+0x80000,
 	AddrSata0	= Regbase+0x82000,
 	AddrSata1	= Regbase+0x84000,
+	AddrAta0	= Regbase+0x82100, /* sic, docs wrongly say 0xa2100 */
+	AddrAta1	= Regbase+0x84100,
 
 	AddrSdio	= Regbase+0x90000,
 
@@ -562,7 +564,7 @@ struct SdioReg
 	ulong	addrdecerrmsk;
 };
 
-#define MPPREG ((Reg*)AddrMpp)
+#define MPPREG ((MppReg*)AddrMpp)
 typedef struct MppReg MppReg;
 struct MppReg
 {
@@ -774,4 +776,129 @@ struct UsbReg
 	ulong	phyconf;
 	ulong   pad9[PAD(0x50360, 0x50400)];
 	ulong	power;
+};
+
+
+#define SATAHCREG ((SatahcReg*)AddrSatahc)
+typedef struct SatahcReg SatahcReg;
+struct SatahcReg
+{
+	ulong	cfg;
+	ulong	qout;
+	ulong	qin;
+	ulong	intrcoalesc;
+	ulong	intrtime;
+	ulong	intr;
+	ulong	_pad0[2];
+	ulong	intrmain;
+	ulong	intrmainmask;
+	ulong	_pad1;
+	ulong	ledcfg;
+	struct	{
+		ulong	ctl;
+		ulong	base;
+		ulong	_pad0[2];
+	} win[4];
+};
+
+#define SATA0REG ((SataReg*)AddrSata0)
+#define SATA1REG ((SataReg*)AddrSata1)
+typedef struct SataReg SataReg;
+struct SataReg
+{
+	/* edma */
+	ulong	cfg;
+	ulong	_pad0;
+	ulong	intre;
+	ulong	intremask;
+	ulong	reqbasehi;
+	ulong	reqin;
+	ulong	reqout;
+	ulong	respbasehi;
+	ulong	respin;
+	ulong	respout;
+	ulong	cmd;
+	ulong	_pad1;
+	ulong	status;
+	ulong	iordytimeout;
+	ulong	_pad2[2];
+	ulong	cmddelaythr;
+	uchar	_pad3[0x50-0x44];
+
+	/* sata interface */
+	ulong	ifccfg;
+	ulong	pllcfg;
+	uchar	_pad4[0x60-0x58];
+
+	/* edma */
+	ulong	haltcond;
+	uchar	_pad5[0x94-0x64];
+	ulong	ncqdone;
+	uchar	_pad6[0x224-0x98];
+
+	/* basic dma */
+	struct {
+		ulong	cmd;
+		ulong	status;
+		ulong	dtlo;
+		ulong	dthi;
+		ulong	drlo;
+		ulong	drhi;
+	} bdma;
+	uchar	_pad7[0x300-0x23c];
+
+	/* sata interface */
+	ulong	sstatus;
+	ulong	serror;
+	ulong	scontrol;
+	ulong	ltmode;
+	ulong	phym3;
+	ulong	phym4;
+	ulong	_pad8[5];
+	ulong	phym1;
+	ulong	phym2;
+	ulong	bistctl;
+	ulong	bist1;
+	ulong	bist2;
+	ulong	serrintrmask;
+	ulong	ifcctl;
+	ulong	ifctestctl;
+	ulong	ifcstatus;
+	ulong	_pad9[3];
+	ulong	vendor;
+	ulong	fiscfg;
+	ulong	fisintr;
+	ulong	fisintrmask;
+	ulong	_pad10;
+	ulong	fis[7];
+	ulong	_pad11[3];
+	ulong	phym9g2;
+	ulong	phym9g1;
+	ulong	phycfg;
+	ulong	phytctl;
+	ulong	phym10;
+	ulong	_pad12;
+	ulong	phym12;
+};
+
+#define ATA0REG	((AtaReg*)AddrAta0)
+#define ATA1REG	((AtaReg*)AddrAta1)
+typedef struct AtaReg AtaReg;
+struct AtaReg
+{
+	ulong	data;
+	union {
+		ulong	feat;
+		ulong	error;
+	};
+	ulong	sectors;
+	ulong	lbalow;
+	ulong	lbamid;
+	ulong	lbahigh;
+	ulong	dev;
+	union {
+		ulong	cmd;
+		ulong	status;
+	};
+	ulong	ctl;
 };

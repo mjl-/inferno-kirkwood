@@ -1,20 +1,24 @@
 # status
 
 boots, uses uart as console, rtc, runs dis programs, basic network
-support (dhcp & mount working), might read a some sd cards.
+support (dhcp & mount working), might read some sd cards, can read
+nand flash pages.
 
 next steps:
 - better nand support
 - delay/microdelay calibration
+- complete sata
+- lower power
 - find problems/crashes
 - more sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
 - flush data cache around dma
-- l2 caches
-- nand
+- l2 cache
 - more ethernet (fewer interrupts, more checks for idleness when configuring)
 - improve uart (mode setting)
 - crypto support
-- later: gpio,usb,twsi,spi,sata,audio(i2s),pciexpress
+- more gpio
+- usb
+- later: twsi,spi,audio(i2s),pciexpress
 
 
 # intro
