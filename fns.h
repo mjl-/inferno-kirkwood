@@ -10,6 +10,7 @@ void	setr13(int, void*);
 #define KADDR(p)	((void *)p)
 #define PADDR(p)	((ulong)p)
 
+void	archcpufreq(int slow);
 void	archconfinit(void);
 void	archconsole(void);
 void	archreset(void);

@@ -18,6 +18,8 @@ enum {
 
 	AddrEfuse	= Regbase+0x1008c,
 
+	AddrTwsi	= Regbase+0x11000,
+
 	AddrUart0	= Regbase+0x12000,
 	AddrUart1	= Regbase+0x12100,
 
@@ -25,6 +27,7 @@ enum {
 	AddrCpucsr	= Regbase+0x20100,
 	AddrIntr	= Regbase+0x20200,
 	AddrTimer	= Regbase+0x20300,
+	AddrL2win	= Regbase+0x20a00,
 
 	AddrTdma	= Regbase+0x30800,
 	AddrHash	= Regbase+0x3dd00,
@@ -69,11 +72,54 @@ enum {
 
 
 enum {
-	RstoutPex =	1<<0,
-	RstoutWatchdog =1<<1,
-	RstoutSoft =	1<<2,
+	RstoutPex	= 1<<0,
+	RstoutWatchdog	= 1<<1,
+	RstoutSoft	= 1<<2,
 
-	ResetSystem =	1<<0,
+	ResetSystem	= 1<<0,
+
+	/* CpucsReg.mempm, memory power down */
+	Gbe0mem		= 1<<0,
+	Pex0mem		= 1<<1,
+	Usb0mem		= 1<<2,
+	Dunitmem	= 1<<3,
+	Runitmem	= 1<<4,
+	Xor0mem		= 1<<5,
+	Sata0mem	= 1<<6,
+	Xor1mem		= 1<<7,
+	Cryptomem	= 1<<8,
+	Audiomem	= 1<<9,
+	Sata1mem	= 1<<11,
+	Gbe1mem		= 1<<13,
+
+	/* CpucsReg.clockgate, clock enable */
+	Gbe0clock	= 1<<0,
+	Pex0clock	= 1<<2,
+	Usb0clock	= 1<<3,
+	Sdioclock	= 1<<4,
+	Tsuclock	= 1<<5,
+	Dunitclock	= 1<<6,
+	Runitclock	= 1<<7,
+	Xor0clock	= 1<<8,
+	Audioclock	= 1<<9,
+	Clockrealign	= 1<<10,
+	Powersave	= 1<<11,
+	Powerhalf	= 1<<12,
+	Newclockratio	= 1<<13,
+	Sata0clock	= 1<<14,
+	Sata1clock	= 1<<15,
+	Xor1clock	= 1<<16,
+	Cryptoclock	= 1<<17,
+	Gbe1clock	= 1<<19,
+	Tdmclock	= 1<<20,
+
+	/* CpucsReg.l2cfg, cpu l2 cfg */
+	L2ecc		= 1<<2,
+	L2enable	= 1<<3,
+	L2wtmode	= 1<<4,
+
+	Pexenable	= 1<<0,
+	Intrblock	= 1<<28,
 };
 
 #define CPUCSREG	((CpucsReg*)AddrCpucsr)
@@ -195,6 +241,16 @@ struct TimerReg
 	ulong	timer1;
 	ulong	reloadwd;
 	ulong	timerwd;
+};
+
+#define L2WINREG	((L2winReg*)AddrL2win);
+typedef struct L2winReg L2winReg;
+struct L2winReg
+{
+	struct {
+		ulong	addr;
+		ulong	size;
+	} win[4];
 };
 
 

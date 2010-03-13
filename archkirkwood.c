@@ -50,6 +50,21 @@ p32(uchar *p, ulong v)
 	USED(p);
 }
 
+/* half cpu frequency */
+void
+archcpufreq(int low)
+{
+	CPUCSREG->cpucsr |= Intrblock;
+	if(low) {
+		CPUCSREG->clockgate |= Powersave;
+		CPUCSREG->clockgate |= Powerhalf;
+	} else {
+		CPUCSREG->clockgate &= ~(Powersave|Powerhalf);
+	}
+	idle();
+	CPUCSREG->cpucsr &= ~Intrblock;
+}
+
 void
 archetheraddr(Ether *e, GbeReg *reg, int queue)
 {

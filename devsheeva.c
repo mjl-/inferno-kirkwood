@@ -120,11 +120,12 @@ sheevaread(Chan* c, void* a, long n, vlong offset)
 }
 
 enum {
-	CMwatchdog,
+	CMwatchdog, CMcpufreq,
 };
 static Cmdtab sheevactl[] = 
 {
 	CMwatchdog,	"watchdog",	2,
+	CMcpufreq,	"cpufreq",	2,
 };
 
 static long
@@ -152,6 +153,14 @@ sheevawrite(Chan* c, void* a, long n, vlong offset)
 				TIMERREG->ctl |= TmrWDenable;
 			else if(strcmp(cb->f[1], "off") == 0)
 				TIMERREG->ctl &= ~TmrWDenable;
+			else
+				error(Ebadctl);
+			break;
+		case CMcpufreq:
+			if(strcmp(cb->f[1], "low") == 0)
+				archcpufreq(1);
+			else if(strcmp(cb->f[1], "high") == 0)
+				archcpufreq(0);
 			else
 				error(Ebadctl);
 			break;

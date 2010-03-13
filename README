@@ -8,7 +8,7 @@ next steps:
 - better nand support
 - delay/microdelay calibration
 - complete sata
-- lower power
+- lower power.  make sure we don't go into sdram self-refresh when we were just doing something useful.
 - find problems/crashes
 - more sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
 - flush data cache around dma

@@ -122,6 +122,24 @@ poolsizeinit(void)
 
 #define doc(s)	if(1) serialputs(s, strlen(s))
 
+static void
+printl2(void)
+{
+	ulong v;
+	int i;
+	L2winReg *l = L2WINREG;
+
+	v = CPUCSREG->l2cfg;
+	print("l2: %s, ecc %s, mode %s\n", (v&L2enable) ? "on" : "off", (v&L2ecc) ? "on" : "off", (v & L2wtmode) ? "writethrough" : "writeback");
+
+	print("l2cfg: %#lux\n", v);
+
+	print("l2 non cacheable regions:\n");
+	for(i = 0; i < nelem(l->win); i++)
+		print("addr %#lux, size %#lux (%s)\n", l->win[i].addr, l->win[i].size, (l->win[i].addr&1) ? "on" : "off");
+}
+
+
 void
 main(void)
 {
@@ -154,6 +172,8 @@ main(void)
 	print("Vita Nuova\n");
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
 	print("kirkwood %s\n\n", conf.devidstr);
+
+	//printl2();
 
 	userinit();
 	schedinit();
