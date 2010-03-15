@@ -17,7 +17,7 @@ enum{
 };
 
 static
-Dirtab sheevatab[]={
+Dirtab sheevatab[] = {
 	".",			{Qdir, 0, QTDIR},	0,	0555,
 	"sheevactl",		{Qctl},			0,	0600,
 	"sheevamem",		{Qmem, 0},		0,	0600,

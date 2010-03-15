@@ -364,7 +364,9 @@ rxreplenish(Ctlr *ctlr)
 		r = &ctlr->rx[ctlr->rxtail];
 		r->countsize = Bufsize(Rxblocklen);
 		r->buf = (ulong)b->rp;
+		dcwbinv(b->rp, Rxblocklen);
 		r->cs = RCSdmaown|RCSenableintr;
+		dcwb(r, sizeof r[0]);
 		ctlr->rxtail = NEXT(ctlr->rxtail, Nrx);
 	}
 }
@@ -379,6 +381,7 @@ receive(Ether *e)
 
 	for(;;) {
 		r = &ctlr->rx[ctlr->rxhead];
+		dcinv(r, sizeof r[0]);
 		if(r->cs & RCSdmaown)
 			break;
 
@@ -416,7 +419,11 @@ transmit(Ether *e)
 
 	ilock(ctlr);
 	/* free transmitted packets */
-	while(ctlr->txtail != ctlr->txhead && (ctlr->tx[ctlr->txtail].cs & TCSdmaown) == 0) {
+	while(ctlr->txtail != ctlr->txhead) {
+		t = &ctlr->tx[ctlr->txtail];
+		dcinv(t, sizeof t[0]);
+		if((t->cs & TCSdmaown) == 0)
+			break;
 		if(ctlr->txb[ctlr->txtail] == nil)
 			panic("no block for sent packet?!");
 		freeb(ctlr->txb[ctlr->txtail]);
@@ -427,6 +434,7 @@ transmit(Ether *e)
 	/* queue new packets */
 	while(qcanread(e->oq)) {
 		t = &ctlr->tx[ctlr->txhead];
+		dcinv(t, sizeof t[0]);
 		if(t->cs & TCSdmaown) {
 			ctlr->txringfull++;
 			break;
@@ -441,6 +449,8 @@ transmit(Ether *e)
 		t->countchk = BLEN(b)<<16;
 		t->buf = (ulong)b->rp;
 		t->cs = TCSpadding|TCSfirst|TCSlast|TCSenableintr|TCSdmaown;
+		dcwbinv(b->rp, BLEN(b));
+		dcwbinv(t, sizeof t[0]);
 		reg->tqc = Txqenable(0);
 		
 		ctlr->txhead = NEXT(ctlr->txhead, Ntx);
@@ -694,7 +704,7 @@ ctl(Ether *e, void *p, long n)
 enum
 {
 	/* SMI regs */
-	PhySmiTimeout	= 10000,
+	PhySmiTimeout	= 100000,
 	PhySmiDataOff	= 0,				// Data
 	PhySmiDataMsk	= 0xffff<<PhySmiDataOff,
 		
@@ -717,52 +727,47 @@ enum
 static int
 smibusywait(GbeReg *reg, int waitbit)
 {
-	ulong timeout, smi_reg;
+	ulong timeout, smireg;
 	
 	timeout = PhySmiTimeout;
 	do {
-		smi_reg = reg->smi;
-		if (timeout-- == 0) {
+		smireg = reg->smi;
+		if(timeout-- == 0) {
 			MIIDBG("SMI busy timeout %x\n", waitbit);
 			return -1;
 		}
-	} while (smi_reg & waitbit);
+	} while(smireg & waitbit);
 	return 0;
 }
 
 static int
 miird(Mii *mii, int pa, int ra)
 {
-	Ctlr *ctlr;
-	GbeReg *reg;
-	ulong smi_reg;
+	Ctlr *ctlr = mii->ctlr;
+	GbeReg *reg = ctlr->reg;
 	ulong timeout;
 
-	ctlr = (Ctlr*)mii->ctlr;
-	reg = ctlr->reg;
-	
 	// check to read params
-	if (pa == 0xEE && ra == 0xEE)
+	if(pa == 0xEE && ra == 0xEE)
 		return reg->phy & 0x00ff;
 
 	// check params
-	if (pa<<PhySmiAddrOff & ~PhySmiAddrMsk)
+	if(pa<<PhySmiAddrOff & ~PhySmiAddrMsk)
 		return -1;
-	if (ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
+	if(ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
 		return -1;
 	
 	smibusywait(reg, PhySmiBusy);
 
 	/* fill the phy address and regiser offset and read opcode */
-	smi_reg = (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff) | PhySmiOpcodeRd;
-	reg->smi = smi_reg;
+	reg->smi = (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff) | PhySmiOpcodeRd;
 	
-	/*wait till readed value is ready */
+	/* wait till readed value is ready */
 	if(smibusywait(reg, PhySmiReadValid) < 0)
 		return -1;
 
 	/* Wait for the data to update in the SMI register */
-	for (timeout = 0; timeout < PhySmiTimeout; timeout++)
+	for(timeout = 0; timeout < PhySmiTimeout; timeout++)
 		{}
 	
 	return reg->smi & PhySmiDataMsk;
@@ -771,27 +776,20 @@ miird(Mii *mii, int pa, int ra)
 static int
 miiwr(Mii *mii, int pa, int ra, int v)
 {
-	Ctlr *ctlr;
-	GbeReg *reg;
-	ulong smi_reg;
+	Ctlr *ctlr = mii->ctlr;
+	GbeReg *reg = ctlr->reg;
 
-	ctlr = (Ctlr*)mii->ctlr;
-	reg = ctlr->reg;
-	
 	// check params
-	if (pa<<PhySmiAddrOff & ~PhySmiAddrMsk)
+	if(pa<<PhySmiAddrOff & ~PhySmiAddrMsk)
 		return -1;
-	if (ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
+	if(ra<<SmiRegAddrOff & ~SmiRegAddrMsk)
 		return -1;
 	
 	smibusywait(reg, PhySmiBusy);
 	
 	/* fill the phy address and regiser offset and read opcode */
-	smi_reg = v<<PhySmiDataOff;
-	smi_reg |= (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff);
-	smi_reg &= ~ PhySmiOpcodeRd;
-
-	reg->smi = smi_reg;
+	reg->smi = (v<<PhySmiDataOff) | (pa<<PhySmiAddrOff) | (ra<<SmiRegAddrOff);
+	reg->smi &= ~PhySmiOpcodeRd;
 	
 	return 0;
 }
@@ -799,45 +797,47 @@ miiwr(Mii *mii, int pa, int ra, int v)
 static int
 kirkwoodmii(Ctlr *ctlr)
 {
+	Mii *m;
 	MiiPhy *phy;
 	int i;
 
 	MIIDBG("mii\n");
-	if((ctlr->mii = malloc(sizeof(Mii))) == nil)
+	m = malloc(sizeof(Mii));
+	if(m == nil)
 		return -1;
-	ctlr->mii->ctlr = ctlr;
-	ctlr->mii->mir = miird;
-	ctlr->mii->miw = miiwr;
+	m->ctlr = ctlr;
+	m->mir = miird;
+	m->miw = miiwr;
 	
-	if(mii(ctlr->mii, ~0) == 0 || (phy = ctlr->mii->curphy) == nil){
-		free(ctlr->mii);
-		ctlr->mii = nil;
+	if(mii(m, ~0) == 0 || (phy = m->curphy) == nil){
+		free(m);
 		iprint("etherkirkwood: init mii failure\n");
 		return -1;
 	}
+	ctlr->mii = m;
 
 	MIIDBG("oui %X phyno %d\n", phy->oui, phy->phyno);
-	if(miistatus(ctlr->mii) < 0){
+	if(miistatus(m) < 0){
 
-		miireset(ctlr->mii);
+		miireset(m);
 		MIIDBG("miireset\n");
-		if(miiane(ctlr->mii, ~0, 0, ~0) < 0){
+		if(miiane(m, ~0, 0, ~0) < 0){
 			iprint("miiane failed\n");
 			return -1;
 		}
 		MIIDBG("miistatus\n");
-		miistatus(ctlr->mii);
-		if(miird(ctlr->mii, phy->phyno, Bmsr) & BmsrLs){
+		miistatus(m);
+		if(miird(m, phy->phyno, Bmsr) & BmsrLs){
 			for(i=0;; i++){
 				if(i > 600){
 					iprint("kirkwood%d: autonegotiation failed\n", ctlr->port);
 					break;
 				}
-				if(miird(ctlr->mii, phy->phyno, Bmsr) & BmsrAnc)
+				if(miird(m, phy->phyno, Bmsr) & BmsrAnc)
 					break;
 				delay(10);
 			}
-			if(miistatus(ctlr->mii) < 0)
+			if(miistatus(m) < 0)
 				iprint("miistatus failed\n");
 		}else{
 			iprint("kirkwood%d: no link\n", ctlr->port);
@@ -846,9 +846,7 @@ kirkwoodmii(Ctlr *ctlr)
 	}
 
 	iprint("kirkwood%d mii: fd=%d speed=%d tfc=%d rfc=%d\n", ctlr->port, phy->fd, phy->speed, phy->tfc, phy->rfc);
-
 	MIIDBG("mii done\n");
-
 	return 0;
 }
 
@@ -861,7 +859,7 @@ miiphyinit(Mii *mii)
 	// select mii phy
 	devadr = miird(mii, 0xEE, 0xEE);
 	print("devadr %lux\n", devadr);
-	if (devadr == -1) {
+	if(devadr == -1) {
 		print("Error..could not read PHY dev address\n");
 		return -1;
 	}
@@ -889,18 +887,18 @@ portreset(GbeReg *reg)
 	ulong v, i;
 	
 	v = reg->tqc;
-	if (v & 0xff) {
+	if(v & 0xff) {
 		/* Stop & Wait for all Tx activity to terminate. */
 		reg->tqc = v << 8;
-		while (reg->tqc & 0xff)
+		while(reg->tqc & 0xff)
 			{}
 	}
 
 	v = reg->rqc;
-	if (v & 0xff) {
+	if(v & 0xff) {
 		reg->rqc = v << 8;
 		/* Stop & Wait for all Rx activity to terminate. */
-		while (reg->rqc & 0xff);
+		while(reg->rqc & 0xff);
 			{}
 	}
 
@@ -909,7 +907,7 @@ portreset(GbeReg *reg)
 	/* Set port & MMI active */
 	reg->psc1 &= ~(PSC1rgmii|PSC1portreset);
 
-	for (i = 0; i < 4000; i++)
+	for(i = 0; i < 4000; i++)
 		{}
 }
 

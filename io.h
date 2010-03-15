@@ -14,7 +14,6 @@ enum {
 	AddrDeviceid	= Regbase+0x10034,
 	AddrClockctl	= Regbase+0x1004c,
 	AddrIocfg0	= Regbase+0x100e0,
-	AddrDevid	= Regbase+0x10034,
 
 	AddrEfuse	= Regbase+0x1008c,
 

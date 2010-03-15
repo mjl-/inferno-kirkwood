@@ -177,12 +177,9 @@ trapinit(void)
 
 	memmove(page0->vectors, vectors, sizeof(page0->vectors));
 	memmove(page0->vtable, vtable, sizeof(page0->vtable));
-/*
-	dcflush(page0, sizeof(*page0));
-	icflush(page0, sizeof(*page0));
-*/
-	if(0)iprint("TCM present: %lux\n", tcmstat());
 
+	dcwb(page0, sizeof page0[0]);
+	icinv(page0, sizeof page0[0]);
 
 	for(i = 0; i < nelem(irqlo); i++)
 		intrunset(&irqlo[i]);

@@ -29,7 +29,7 @@ archconfinit(void)
 
 	m->cpuhz = 1200*1000*1000;
 	m->delayloop = m->cpuhz/6000;  /* initial estimate */
-	conf.devidstr = devidstr(*(ulong*)AddrDevid);
+	conf.devidstr = devidstr(*(ulong*)AddrDeviceid);
 }
 
 static void
@@ -54,15 +54,17 @@ p32(uchar *p, ulong v)
 void
 archcpufreq(int low)
 {
-	CPUCSREG->cpucsr |= Intrblock;
+	CpucsReg *r = CPUCSREG;
+
+	r->cpucsr |= Intrblock;
 	if(low) {
-		CPUCSREG->clockgate |= Powersave;
-		CPUCSREG->clockgate |= Powerhalf;
+		r->clockgate |= Powersave;
+		r->clockgate |= Powerhalf;
 	} else {
-		CPUCSREG->clockgate &= ~(Powersave|Powerhalf);
+		r->clockgate &= ~(Powersave|Powerhalf);
 	}
 	idle();
-	CPUCSREG->cpucsr &= ~Intrblock;
+	r->cpucsr &= ~Intrblock;
 }
 
 void
@@ -138,7 +140,7 @@ archreset(void)
 void
 archreboot(void)
 {
-	dcflushall();
+	dcwball();
 	CPUCSREG->rstout = RstoutSoft;
 	CPUCSREG->softreset = ResetSystem;
 	for(;;)

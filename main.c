@@ -112,46 +112,183 @@ options(void)
 static void
 poolsizeinit(void)
 {
-	ulong nb;
+	uvlong nb;
 
 	nb = conf.npage*BY2PG;
-	poolsize(mainmem, (nb*main_pool_pcnt)/100, 0);
-	poolsize(heapmem, (nb*heap_pool_pcnt)/100, 0);
-	poolsize(imagmem, (nb*image_pool_pcnt)/100, 1);
+	poolsize(mainmem, (int)((nb*main_pool_pcnt)/100), 0);
+	poolsize(heapmem, (int)((nb*heap_pool_pcnt)/100), 0);
+	poolsize(imagmem, (int)((nb*image_pool_pcnt)/100), 1);
 }
 
-#define doc(s)	if(1) serialputs(s, strlen(s))
-
 static void
-printl2(void)
+l2print(void)
 {
 	ulong v;
-	int i;
-	L2winReg *l = L2WINREG;
 
 	v = CPUCSREG->l2cfg;
 	print("l2: %s, ecc %s, mode %s\n", (v&L2enable) ? "on" : "off", (v&L2ecc) ? "on" : "off", (v & L2wtmode) ? "writethrough" : "writeback");
 
-	print("l2cfg: %#lux\n", v);
+if(0) {
+	int i;
+	L2winReg *l = L2WINREG;
 
+	print("l2cfg: %#lux\n", v);
 	print("l2 non cacheable regions:\n");
 	for(i = 0; i < nelem(l->win); i++)
 		print("addr %#lux, size %#lux (%s)\n", l->win[i].addr, l->win[i].size, (l->win[i].addr&1) ? "on" : "off");
 }
+}
 
+static char*
+onoff(ulong v)
+{
+	if(v)
+		return "on";
+	return "off";
+}
+
+static void
+cacheprint0(char *s, int on, ulong v)
+{
+	ulong len, m, assoc, sz;
+
+	len = (v>>0) & MASK(2);
+	m = (v>>2) & MASK(1);
+	assoc = (v>>3) & MASK(3);
+	sz = (v>>6) & MASK(4);
+	if(m == 0)
+		print("%s %s, %dkb, %s associative, %s lines\n",
+			s,
+			onoff(on),
+			1<<(sz-1),
+			(assoc == 0x02) ? "4-way" : "unknown",
+			(len == 0x02) ? "32 byte" : "unknown sized");
+	else
+		print("%s absent\n", s);
+}
+
+
+enum {
+	/* domain access control register.  16x 2-bits. */
+	Client		= 0x1,	/* obey access permission bits in descriptors */
+	Manager 	= 0x3,	/* do not obey ... */
+
+	/* coprocessor control register */
+	Roundrobin	= 1<<14,
+	Icacheena	= 1<<12,
+	Romprot		= 1<<9,
+	Systemprot	= 1<<8,
+	Bigendian	= 1<<7,
+	Dcacheena	= 1<<2,
+	Alignfault	= 1<<1,
+	MMUena		= 1<<0,
+
+	/* section descriptor */
+	AP		= 0x3<<10,
+	Cacheable	= 1<<3,
+	Bufferable	= 1<<2,
+	Sectiondescr	= (1<<4)|(2<<0),
+};
+static void
+cacheprint(void)
+{
+	ulong v;
+	ulong isz, dsz;
+
+	v = cacheget();
+	isz = (v>>0) & MASK(12);
+	dsz = (v>>12) & MASK(12);
+	v = cpctlget();
+	cacheprint0("icache", v&Icacheena, isz);
+	cacheprint0("dcache", v&Dcacheena, dsz);
+
+	if(0)print("mmu %s, %s endian, align faults %s, protection: rom %s, system %s\n",
+		onoff(v&MMUena),
+		(v&Bigendian) ? "big" : "little",
+		onoff(Alignfault), 
+		onoff(v&Romprot),
+		onoff(v&Systemprot));
+}
+
+/* mmu is required to use dcache. */
+static void
+mmuinit(void)
+{
+	ulong *p;
+	ulong i;
+
+	p = xspanalloc(16*1024, 16*1024, 0);
+	if(p == nil)
+		panic("no memory for mmu");
+
+	/*
+	 * invalidate all descriptors, then map with va == vma == pa:
+	 * - first 512mb on sdram, cacheable & bufferable (cb).
+	 * - register file & nand interface, non-cacheable & non-bufferable (ncnb).
+	 * note: we may want to add more ncnb sections, e.g. for pci express
+	 */
+	memset(p, 0, 16*1024);
+	for(i = 0; i < 512; i++)
+		p[i] = (i<<20)|AP|Cacheable|Bufferable|Sectiondescr;
+	p[Regbase>>20] = (Regbase&~MASK(20))|AP|Sectiondescr;
+	p[AddrPhyNand>>20] = (AddrPhyNand&~MASK(20))|AP|Sectiondescr;
+
+	/* enable mmu & l1 caches */
+	ttbput((ulong)p);	/* translation table base address */
+	dacput(Manager<<0);	/* we only use dom 0, all accesses allowed */
+	fcsepidput(0);		/* pid used in mva (modified va).  always 0 for us. */
+	dclockdownput(0xfff<<4);	/* bits 3..0 set the locked Ways */
+	dcinvall();
+	tlbclear();
+	/* xxx should set the 8 locked down tlb entries.  for performance, but also because they now may contain bad entries. */
+	cpctlput(cpctlget()|MMUena|Icacheena|Dcacheena|Alignfault);
+}
+
+/*
+xxx something is wrong with flushing the dcache.
+perhaps the special test & clean cp mrc instructions _do_ modify r15?
+*/
+void dcwb0(void *, ulong);
+void dcwbinv0(void *, ulong);
+
+void
+dcwb(void *p, ulong n)
+{
+	if(0 && n > CACHESIZE/2)
+		dcwball();
+	else
+		dcwb0(p, n);
+}
+
+void
+dcwbinv(void *p, ulong n)
+{
+	if(0 && n > CACHESIZE/2)
+		dcwbinvall();
+	else
+		dcwbinv0(p, n);
+}
 
 void
 main(void)
 {
+	CPUCSREG->l2cfg &= ~L2enable;
+
+	/* invalidate & enable l1 icache */
+	iclockdownput(0xfff<<4);	/* bits 3..0 set the locked Ways */
+	icinvall();
+	cpctlput(cpctlget()|Icacheena);
+
 	memset(edata, 0, end-edata);	/* clear bss */
 	memset(m, 0, sizeof(Mach));	/* clear mach */
 	conf.nmach = 1;
 
 	archreset();
-	mmuinit();
 	quotefmtinstall();
 	confinit();
 	xinit();
+	iprint("mmuinit\n");
+	mmuinit();
 	poolinit();
 	poolsizeinit();
 	options();
@@ -160,22 +297,29 @@ main(void)
 	printinit();
 	procinit();
 	archconsole();
+	iprint("links\n");
 	links();
+	iprint("chandevreset\n");
 	chandevreset();
 
 	eve = strdup("inferno");
 
+	iprint("kbdinit\n");
 	kbdinit();
 
-	print("%ld MHz id %8.8lux\n", (m->cpuhz+500000)/1000000, getcpuid());
+	iprint("prints\n");
+	print("%ld MHz, id %08lux\n", (m->cpuhz+500000)/1000000, cpuidget());
 	print("\nInferno %s\n", VERSION);
 	print("Vita Nuova\n");
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
 	print("kirkwood %s\n\n", conf.devidstr);
 
-	//printl2();
+	l2print();
+	cacheprint();
 
+	iprint("userinit\n");
 	userinit();
+	iprint("schedinit\n");
 	schedinit();
 }
 
@@ -204,11 +348,10 @@ confinit(void)
 
 	base = PGROUND((ulong)end);
 	conf.base0 = base;
+	conf.npage0 = (conf.topofmem - base)/BY2PG;
 
 	conf.base1 = 0;
 	conf.npage1 = 0;
-
-	conf.npage0 = (conf.topofmem - base)/BY2PG;
 
 	conf.npage = conf.npage0 + conf.npage1;
 	conf.ialloc = (((conf.npage*(main_pool_pcnt))/100)/2)*BY2PG;
@@ -313,12 +456,8 @@ linkproc(void)
 int
 segflush(void *a, ulong n)
 {
-	USED(a, n);
-	dcflushall(); 
-	icflushall(); 
-
-	//dcflush(a, n);
-	//icflush(a, n);
+	dcwb(a, n);
+	icinv(a, n);
 	//l2cache(a, n);
 	return 0;
 }

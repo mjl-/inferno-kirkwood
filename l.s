@@ -2,7 +2,7 @@
 
 /*
  * what's the state when we get here, what u-boot set up?
- * i'm guessing:  no interrupts, no caches
+ * i'm guessing:  no interrupts, no caches, no mmu
  */
 
 TEXT _startup(SB), $-4
@@ -209,37 +209,164 @@ TEXT gotopc(SB), $-4
 	RET
 
 TEXT idle(SB), $-4
-	MCR	CpMMU, 0, R0, C(CpCacheCtl), C(0), 4
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C(CpCacheCtl), C0, 4
 	RET
 
-TEXT getcpuid(SB), $-4
-	MRC	CpMMU, 0, R0, C(CpCPUID), C(0)
+
+TEXT cpuidget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpCPUID), C0, 0
 	RET
 
-TEXT tcmstat(SB), $-4
-	MRC	CpMMU, 0, R0, C(CpCPUID), C(0), 2
+TEXT cacheget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpCacheID), C0, 1
 	RET
 
-TEXT rcpctl(SB), $-4
-	MRC	CpMMU, 0, R0, C(CpControl), C(0), 0
+TEXT tcmget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpCacheID), C0, 2
+	RET
+
+TEXT cpctlget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpControl), C0, 0
 	RET
  
-TEXT wcpctl(SB), $-4
-	MCR	CpMMU, 0, R0, C(CpControl), C(0), 0
-	RET
-
-TEXT mmuinit(SB), $-4
-	/* enable icache, dcache and mpu */
-	MRC	CpMMU, 0, R0, C(CpControl), C0, 0
-	ORR	$(CpCrrob|CpCIcache|CpCDcache), R0
+TEXT cpctlput(SB), $-4
 	MCR	CpMMU, 0, R0, C(CpControl), C0, 0
 	RET
 
-
-TEXT icflushall(SB), $-4
-	MCR	CpMMU, 0, R1, C(CpCacheCtl), C5, 0 
+TEXT ttbget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpTTB), C0, 0
 	RET
 
-TEXT dcflushall(SB), $-4
-	MCR	CpMMU, 0, R1, C(CpCacheCtl), C6, 0
+TEXT ttbput(SB), $-4
+	MCR	CpMMU, 0, R0, C(CpTTB), C0, 0
+	RET
+
+TEXT dacget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpDAC), C0, 0
+	RET
+	
+TEXT dacput(SB), $-4
+	MCR	CpMMU, 0, R0, C(CpDAC), C0, 0
+	RET
+
+TEXT dclockdownget(SB), $-4
+	MRC	CpMMU, 0, R0, C9, C0, 0
+	RET
+
+TEXT dclockdownput(SB), $-4
+	MCR	CpMMU, 0, R0, C9, C0, 0
+	RET
+
+TEXT iclockdownget(SB), $-4
+	MRC	CpMMU, 0, R0, C9, C0, 1
+	RET
+
+TEXT iclockdownput(SB), $-4
+	MCR	CpMMU, 0, R0, C9, C0, 1
+	RET
+
+TEXT tlblockdownget(SB), $-4
+	MRC	CpMMU, 0, R0, C(CpTLBLk), C0, 0
+	RET
+
+TEXT tlblockdownput(SB), $-4
+	MCR	CpMMU, 0, R0, C(CpTLBLk), C0, 0
+	RET
+
+TEXT fcsepidget(SB), $-4
+	MRC	CpMMU, 0, R0, C13, C0, 0
+	RET
+
+TEXT fcsepidput(SB), $-4
+	MCR	CpMMU, 0, R0, C13, C0, 0
+	RET
+
+TEXT contextidget(SB), $-4
+	MRC	CpMMU, 0, R0, C13, C0, 1
+	RET
+
+TEXT tlbclear(SB), $-4
+	MCR	CpMMU, 0, R0, C(CpTLBops), C7, 0
+
+
+/*
+"write back" (including draining write buffer) and invalidating.
+*/
+
+TEXT icinvall(SB), $-4
+icinvall0:
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C7, C5, 0
+	RET
+
+TEXT icinv(SB), $-4
+	MOVW	4(FP), R1
+	CMP	$(CACHESIZE/2), R1
+	BGE	icinvall0
+	ADD	R0, R1
+	BIC	$(CACHELINESIZE-1), R0
+icinv0:
+	MCR	CpMMU, 0, R0, C7, C5, 1
+	ADD	$CACHELINESIZE, R0
+	CMP	R1, R0
+	BLO	icinv0
+	RET
+
+
+#define DRAINWB		MOVW	$0, R2; \
+			MCR	CpMMU, 0, R2, C7, C10, 4
+
+TEXT dcwball(SB), $-4
+dcwball0:
+	MCR	CpMMU, 0, R15, C7, C10, 3	/* special: modifies condition flags, not r15 */
+	BNE	dcwball0
+	DRAINWB
+	RET
+
+TEXT dcwb0(SB), $-4
+	MOVW	4(FP), R1
+	ADD	R0, R1
+	BIC	$(CACHELINESIZE-1), R0
+dcwb00:
+	MCR	CpMMU, 0, R0, C7, C10, 1
+	ADD	$CACHELINESIZE, R0
+	CMP	R1, R0
+	BLO	dcwb00
+	DRAINWB
+	RET
+
+TEXT dcwbinvall(SB), $-4
+dcwbinvall0:
+	MCR	CpMMU, 0, R15, C7, C14, 3	/* special: modifies condition flags, not r15 */
+	BNE	dcwbinvall0
+	DRAINWB
+	RET
+
+TEXT dcwbinv0(SB), $-4
+	MOVW	4(FP), R1
+	ADD	R0, R1
+	BIC	$(CACHELINESIZE-1), R0
+dcwbinv00:
+	MCR	CpMMU, 0, R0, C7, C14, 1
+	ADD	$CACHELINESIZE, R0
+	CMP	R1, R0
+	BLO	dcwbinv00
+	DRAINWB
+	RET
+
+TEXT dcinvall(SB), $-4
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C7, C6, 0
+	RET
+
+TEXT dcinv(SB), $-4
+	MOVW	4(FP), R1
+	ADD	R0, R1
+	BIC	$(CACHELINESIZE-1), R0
+dcinv0:
+	MCR	CpMMU, 0, R0, C7, C6, 1
+	ADD	$CACHELINESIZE, R0
+	CMP	R1, R0
+	BLO	dcinv0
 	RET

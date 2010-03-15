@@ -65,7 +65,7 @@
 /*
  * Internal MMU coprocessor registers
  */
-#define CpCPUID		0		/* R: opcode_2 is 0*/
+#define CpCPUID		0		/* R: opcode_2 is 0 */
 #define CpCacheID	0
 #define	CpControl	1		/* R/W: control (opcode_2 is 0) */
 #define CpTTB		2		/* R/W: translation table base */
@@ -95,3 +95,5 @@
 #define CpCrrob		0x00004000	/* RR: cache replacement strategy */
 #define CpCl4		0x00008000	/* L4: set T bit on PC loads */
 
+#define CACHESIZE	4096
+#define CACHELINESIZE	32

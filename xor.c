@@ -282,6 +282,7 @@ meminitdma(uchar *buf, long n, uvlong v)
 
 	p->pr->cfg = ModeMeminit|Srcburst(Burst32)|Dstburst(Burst32);
 
+	dcwbinv(buf, n);
 	p->pr->dest = (ulong)buf;
 	p->pr->blocksize = n;
 	p->er->initvallo = v;
@@ -312,6 +313,7 @@ crc32cdma(uchar *buf, ulong n)
 	d->bytecount = n;
 	d->dest = 0;
 	d->src = (ulong)buf;
+	dcwbinv(buf, n);
 
 	p->pr->nextdescr = (ulong)d;
 	p->pr->act = XEstart;
@@ -342,6 +344,8 @@ memdma(uchar *dst, uchar *src, ulong n)
 	d->bytecount = n;
 	d->dest = (ulong)dst;
 	d->src = (ulong)src;
+	dcwb(src, n);
+	dcwbinv(dst, n);
 
 	p->pr->nextdescr = (ulong)d;
 	p->pr->act = XEstart;
@@ -371,8 +375,11 @@ xordma(uchar *dst, uchar **src, int nsrc, ulong n)
 	d->nextdescr = 0;
 	d->bytecount = n;
 	d->dest = (ulong)dst;
-	for(i = 0; i < nsrc; i++)
+	dcwbinv(dst, n);
+	for(i = 0; i < nsrc; i++) {
 		d->src[i] = (ulong)src[i];
+		dcwb(src[i], n);
+	}
 
 	p->pr->nextdescr = (ulong)d;
 	p->pr->act = XEstart;

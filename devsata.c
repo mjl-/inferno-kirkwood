@@ -5,7 +5,7 @@ for now we'll assume ncq "first party dma" read/write commands (very old sata di
 
 todo:
 - proper locking, wait for free edma slot.
-- cache flushes around dma
+- look at cache flushes around dma
 - error handling & propagating to caller.
 - phy errata
 - better detect ata support of drives
@@ -223,15 +223,14 @@ g16(uchar *p)
 static void
 sataintr(Ureg*, void*)
 {
-	volatile SatahcReg *hr = SATAHCREG;
-	volatile SataReg *sr = SATA1REG;
+	SatahcReg *hr = SATAHCREG;
+	SataReg *sr = SATA1REG;
 	ulong v, w;
 	static int count = 0;
 	ulong in, out;
 	
-	w = hr->intr;
 	v = hr->intrmain;
-	diprint("intr %#lux, main %#lux\n", w, v);
+	diprint("intr %#lux, main %#lux\n", hr->intr, v);
 	if(v & Sata1err) {
 		diprint("intre %#lux\n", sr->intre);
 		diprint("m 1err\n");
@@ -250,14 +249,14 @@ sataintr(Ureg*, void*)
 	diprint("ncqdone %#lux\n", sr->ncqdone);
 	diprint("reqin %#lux reqout %#lux respin %#lux respout %#lux\n", sr->reqin, sr->reqout, sr->respin, sr->respout);
 
-	/* xxx must clean resps from dcache */
+	dcinv(resps, 32*sizeof resps[0]);
 	in = (sr->respin & MASK(8))/sizeof (Resp);
 	out = (sr->respout & MASK(8))/sizeof (Resp);
 	for(;;) {
 		if(in == out)
 			break;
 		w = resps[in].idflags & MASK(5);
-		if(0 && w != in)
+		if(w != in && 0)
 			iprint("response, in %lud, tag %lud\n", in, w);
 		/* determine which request is done.  maybe from ncqdone.  wakeup its caller. */
 		/* xxx check tag in idflags? */
@@ -312,9 +311,9 @@ enum {
 static ulong
 atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, uchar *data)
 {
-	volatile SatahcReg *hr = SATAHCREG;
-	volatile SataReg *sr = SATA1REG;
-	volatile AtaReg *a = ATA1REG;
+	SatahcReg *hr = SATAHCREG;
+	SataReg *sr = SATA1REG;
+	AtaReg *a = ATA1REG;
 	ulong v;
 
 	/* xxx sleep until edma is disabled or edma is idle (edma status, bit 7 (EDMAIdle).  then disable edma. */
@@ -444,8 +443,8 @@ flush(void)
 static void
 satainit(void)
 {
-	volatile SatahcReg *hr = SATAHCREG;
-	volatile SataReg *sr = SATA1REG;
+	SatahcReg *hr = SATAHCREG;
+	SataReg *sr = SATA1REG;
 
 	CPUCSREG->mempm &= ~(1<<11); // power up port sata1
 	CPUCSREG->clockgate |= 1<<15; // sata1 clock enable
@@ -521,11 +520,13 @@ static ulong
 satadump(char *dst, long n, vlong off)
 {
 	char *buf, *p, *e, *s;
-	volatile SataReg *sr = SATA1REG;
-	volatile SatahcReg *hr = SATAHCREG;
-	volatile AtaReg *a = ATA1REG;
+	SataReg *sr = SATA1REG;
+	SatahcReg *hr = SATAHCREG;
+	AtaReg *a = ATA1REG;
 	ulong v;
 	int i;
+
+	USED(a);
 
 	p = buf = smalloc(2048);
 	e = p+n;
@@ -725,7 +726,7 @@ enum {
 static ulong
 io(int t, void *buf, long nb, vlong off)
 {
-	volatile SataReg *sr = SATA1REG;
+	SataReg *sr = SATA1REG;
 	Req *rq;
 	int i;
 	ulong v;
@@ -769,6 +770,7 @@ io(int t, void *buf, long nb, vlong off)
 		if(ns > 8*128)
 			ns = 8*128;
 		prdfill(prd, buf, ns*512);
+		dcwb(prd, 8*sizeof prd[0]);
 		rq->prdlo = (ulong)prd;
 		rq->ctl = 0;
 		rq->count = 0;
@@ -791,6 +793,7 @@ io(int t, void *buf, long nb, vlong off)
 	rq->ata[1] = (lbalo<<0)|(dev<<24); // 24 bit lba current, dev
 	rq->ata[2] = (lbahi<<0)|(nshi<<24); // 24 bit lba previous, feat ext/previous
 	rq->ata[3] = ((i<<3)<<0)|(0<<8); // sectors current (tag), previous
+	dcwbinv(rq, sizeof rq[0]);
 	sr->fiscfg = (1<<6)-1;
 	sr->fisintr = ~0;
 	sr->fisintrmask = 0;
@@ -798,7 +801,6 @@ io(int t, void *buf, long nb, vlong off)
 diprint("io, using slot %d, off %llud\n", i, off);
 	v = 1<<i;
 	satadone &= ~v;
-	dcflushall();
 	sr->reqin = (ulong)&reqs[reqnext];
 	if((sr->cmd & EdmaEnable) == 0) {
 		sr->cfg |= ECFGncq|0x1f; // 0x1f for queue depth?
@@ -816,7 +818,7 @@ static long
 ctl(char *buf, long n)
 {
 	Cmdbuf *cb;
-	volatile SataReg *sr = SATA1REG;
+	SataReg *sr = SATA1REG;
 
 	cb = parsecmd(buf, n);
 	if(strcmp(cb->f[0], "reset") == 0) {
@@ -903,6 +905,9 @@ sataread(Chan *c, void *buf, long n, vlong off)
 		free(s);
 		return n;
 	case Qdata:
+print("dcwbinv0 %ld\n", n);
+		dcwbinv(buf, n);
+print("dcwbinv1 %ld\n", n);
 		r = 0;
 		while(r < n) {
 			nn = io(Read, (uchar*)buf+r, n-r, off+r);
@@ -927,6 +932,7 @@ satawrite(Chan *c, void *buf, long n, vlong off)
 	case Qctl:
 		error(Ebadarg);
 	case Qdata:
+		dcwbinv(buf, n);
 		r = 0;
 		while(r < n) {
 			nn = io(Write, (uchar*)buf+r, n-r, off+r);

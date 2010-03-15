@@ -5,20 +5,21 @@ support (dhcp & mount working), might read some sd cards, can read
 nand flash pages.
 
 next steps:
+- find out why jumping to eg dcflushinvalall hangs (perhaps the test & clean cache operation with r15 as arg is not right?)
+- better dcache flushing
+- l2 cache
 - better nand support
 - delay/microdelay calibration
-- complete sata
+- better sata support
+- perform register file read after register writes to different registers
 - lower power.  make sure we don't go into sdram self-refresh when we were just doing something useful.
-- find problems/crashes
-- more sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
-- flush data cache around dma
-- l2 cache
-- more ethernet (fewer interrupts, more checks for idleness when configuring)
+- better sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
+- more ethernet (fewer interrupts, more checks for idleness when configuring, phy)
 - improve uart (mode setting)
-- crypto support
-- more gpio
+- unbreak cesa.c, use it again
+- more gpio, devgpio.c
 - usb
-- later: twsi,spi,audio(i2s),pciexpress
+- later: twsi,spi,i2s,pciexpress
 
 
 # intro

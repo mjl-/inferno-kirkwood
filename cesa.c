@@ -239,10 +239,11 @@ static void
 cryptintr(Ureg *, void *)
 {
 	ulong irq;
+	CryptReg *r = CRYPTREG;
 
-	irq = CRYPTREG->irq;
+	irq = r->irq;
 iprint("cryptintr %#lux\n", irq);
-	CRYPTREG->irq = 0;
+	r->irq = 0;
 	if(irq & Iacceltdmadone) {
 		crypt.done = 1;
 		wakeup(&crypt);
@@ -254,7 +255,7 @@ iprint("cryptintr %#lux\n", irq);
 		return;
 	}
 
-	panic("crypt interrupt, accel %#lux, error %#lux\n", CRYPTREG->irq, TDMAREG->irqerr);
+	panic("crypt interrupt, accel %#lux, error %#lux\n", irq, TDMAREG->irqerr);
 }
 
 static void
@@ -317,6 +318,7 @@ enum {
 	s.cryptsrcdest = (SRC<<0)|(DST<<16);
 	s.cryptbytes = sizeof in;
 	s.cryptkey = KEY;
+	dcwb(&s, sizeof s);
 	memmove(src+BASE, &s, sizeof (SDescr));
 	memmove(src+KEY, key, sizeof key);
 	memmove(src+SRC, in, sizeof in);
@@ -336,6 +338,10 @@ enum {
 	d2->src = (ulong)Srambar;
 	d2->dest = (ulong)dst;
 	d2->nextdescr = 0;
+
+	dcwb(d0, 3*sizeof d0[0]);
+	dcwb(src, SIZE);
+	dcwbinv(dst, SIZE);
 
 	t->nextdescr = (ulong)d0;
 	t->ctl = Dstburst(Burst32)|Srcburst(Burst32)|Tmodechained|Tnobyteswap|Tfetchnextdescr; //|Tfetchnextdescr|Tdmaenable;

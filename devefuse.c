@@ -32,7 +32,7 @@ enum {
 };
 
 static
-Dirtab efusetab[]={
+Dirtab efusetab[] = {
 	".",		{Qdir, 0, QTDIR},	0,	0555,
 	"efuse0",	{Qefuse0, 0},		8,	0666,
 	"efuse1",	{Qefuse1, 0},		8,	0666,

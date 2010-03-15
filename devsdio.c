@@ -867,6 +867,7 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	if(n % card.bs != 0)
 		error("not multiple of sector size");
 
+	dcwbinv(a, n);
 	reg->dmaaddrlo = (ulong)a & MASK(16);
 	reg->dmaaddrhi = ((ulong)a>>16) & MASK(16);
 	reg->blksize = card.bs;

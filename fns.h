@@ -22,12 +22,8 @@ void	delay(int ms);
 void	dumpregs(Ureg*);
 int	fpiarm(Ureg*);
 void	fpinit(void);
-ulong	getcallerpc(void*);
-ulong	getcpuid(void);
 char*	getconf(char *);
-void	gotopc(ulong);
 void	idlehands(void);
-void	idle(void);
 void	intrclear(int, int);
 void	intrmask(int, int);
 void	intrunmask(int, int);
@@ -36,18 +32,10 @@ void	intrenable(int, int, void (*)(Ureg*, void*), void*, char*);
 void	kbdinit(void);
 void	links(void);
 void 	microdelay(int us);
-ulong	mmuinit(void);
 int	pcmspecial(char *, ISAConf *);
 void	screeninit(void);
 void	trapinit(void);
 void	uartconsole(void);
-
-int	splfhi(void);
-int	splflo(void);
-ulong	cpsrr(void);
-ulong	spsrr(void);
-void	vectors(void);
-void	vtable(void);
 
 void	serialputs(char *, int);
 void	(*screenputs)(char*, int);
@@ -58,12 +46,46 @@ ulong	crc32cdma(uchar *buf, ulong n);
 void	memdma(uchar *dst, uchar *src, ulong n);
 void	xordma(uchar *dst, uchar **src, int nsrc, ulong n);
 
-ulong	tcmstat(void);
-ulong	rcpctl(void);
-ulong	wcpctl(ulong);
+/* l.s */
+ulong	getcallerpc(void*);
+void	gotopc(ulong);
+void	idle(void);
 
-void	dcflush(void*, ulong);
-void	dcflushall(void);
-void	icflush(void*, ulong);
-void	icflushall(void);
+int	splfhi(void);
+int	splflo(void);
+ulong	cpsrr(void);
+ulong	spsrr(void);
+void	vectors(void);
+void	vtable(void);
+
+ulong	cpuidget(void);
+ulong	cacheget(void);
+ulong	tcmget(void);
+ulong	cpctlget(void);
+ulong	cpctlput(ulong);
+ulong	ttbget(void);
+void	ttbput(ulong);
+ulong	dacget(void);
+void	dacput(ulong);
+ulong	dclockdownget(void);
+void	dclockdownput(ulong);
+ulong	iclockdownget(void);
+void	iclockdownput(ulong);
+ulong	tlblockdownget(ulong);
+ulong	tlblockdownput(ulong);
+ulong	fcsepidget(void);
+void	fcsepidput(ulong);
+ulong	contextidget(void);
+void	tlbclear(void);
+
+void	icinv(void*, ulong);
+void	icinvall(void);
+
+void	dcwb(void*, ulong);
+void	dcwball(void);
+void	dcwbinv(void*, ulong);
+void	dcwbinvall(void);
+void	dcinv(void*, ulong);
+void	dcinvall(void);
+
 int	segflush(void*, ulong);

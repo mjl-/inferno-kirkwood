@@ -136,7 +136,7 @@ nandreadn(Flash *f, uchar *buf, long n)
 static void
 nandwrite(Flash *f, uchar b)
 {
-	volatile *p = (void*)f->addr;
+	volatile uchar *p = f->addr;
 	*p = b;
 }
 

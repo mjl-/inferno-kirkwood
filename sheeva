@@ -35,7 +35,7 @@ link
 	ethermedium
 	etherkirkwood	ethermii
 	xor
-	cesa
+#	cesa
 #	flashnand	nand
 	kwnand
 
