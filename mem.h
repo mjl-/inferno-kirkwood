@@ -96,4 +96,5 @@
 #define CpCl4		0x00008000	/* L4: set T bit on PC loads */
 
 #define CACHESIZE	4096
+#define L2CACHESIZE	262144
 #define CACHELINESIZE	32

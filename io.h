@@ -114,7 +114,7 @@ enum {
 
 	/* CpucsReg.l2cfg, cpu l2 cfg */
 	L2ecc		= 1<<2,
-	L2enable	= 1<<3,
+	L2exists	= 1<<3,
 	L2wtmode	= 1<<4,
 
 	Pexenable	= 1<<0,

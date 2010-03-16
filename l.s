@@ -292,7 +292,9 @@ TEXT tlbclear(SB), $-4
 
 
 /*
-"write back" (including draining write buffer) and invalidating.
+ * "write back" (including draining write buffer) and invalidating.
+ * we use the l2 cache in write-through mode, so writing back the dcache writes back the l2 cache.
+ * we do need to invalidate the l2 cache explicitly.
 */
 
 TEXT icinvall(SB), $-4
@@ -315,10 +317,10 @@ icinv0:
 	RET
 
 
-#define DRAINWB		MOVW	$0, R2; \
-			MCR	CpMMU, 0, R2, C7, C10, 4
-
-/* arm926ej-s' special test,clean,invalidate instruction does not seem to work.  walk through each way for each set. */
+/*
+ * arm926ej-s' special test,clean,invalidate instruction (with loop) does not seem to work.
+ * walk through each way for each set.
+ */
 TEXT dcwball(SB), $-4
 dcwball0:
 	MOVW	$(127<<5), R1			/* start at set 128 */
@@ -330,13 +332,18 @@ wbway:
 	BCS	wbway
 	SUB.S	$(1<<5), R1			/* flag C for no borrow: another set */
 	BCS	wbset
-	DRAINWB
+
+	/* drain write buffer */
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C7, C10, 4
+
 	RET
 
 TEXT dcwb(SB), $-4
 	MOVW	4(FP), R1
 	CMP	$(CACHESIZE), R1
 	BCS	dcwball0
+
 	ADD	R0, R1
 	BIC	$(CACHELINESIZE-1), R0
 dcwb0:
@@ -344,11 +351,21 @@ dcwb0:
 	ADD	$CACHELINESIZE, R0
 	CMP	R1, R0
 	BLO	dcwb0
-	DRAINWB
+
+	/* drain write buffer */
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C7, C10, 4
+
 	RET
 
+/* clean & invalidate entire dcache & l2 cache */
 TEXT dcwbinvall(SB), $-4
 dcwbinvall0:
+	/* disable fiq/irq */
+	MOVW	CPSR, R2
+	ORR	$(PsrDfiq|PsrDirq), R2, R3
+	MOVW	R3, CPSR
+
 	MOVW	$(127<<5), R1			/* start at set 128 */
 wbinvset:
 	ORR	$(3<<30), R1, R0		/* start at way 4 */
@@ -358,34 +375,66 @@ wbinvway:
 	BCS	wbinvway
 	SUB.S	$(1<<5), R1			/* flag C for no borrow: another set */
 	BCS	wbinvset
-	DRAINWB
+
+	/* drain write buffer */
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C7, C10, 4
+
+	MCR	CpMMU, 1, R0, C15, C11, 0	/* invalidate entire l2 cache, fine since we use l2 in write-through mode. */
+	MOVW	R2, CPSR			/* restore fiq/irq state */
 	RET
 
+/*
+ * clean & invalidate address range in both dcache & l2 cache
+ * don't partially flush more than half the l2 cache.  dcwbinvall flushes dcache with fewer instructions, and l2 cache with one.
+ */
 TEXT dcwbinv(SB), $-4
 	MOVW	4(FP), R1
-	CMP	$(CACHESIZE), R1
+	CMP	$(L2CACHESIZE/2), R1
 	BCS	dcwbinvall0
+
 	ADD	R0, R1
 	BIC	$(CACHELINESIZE-1), R0
+	MOVW	R0, R3				/* keep copy of start address */
+
+	/* disable fiq/irq */
+	MOVW	CPSR, R2
+	ORR	$(PsrDfiq|PsrDirq), R2, R4
+	MOVW	R4, CPSR
+
 dcwbinv0:
-	MCR	CpMMU, 0, R0, C7, C14, 1
+	MCR	CpMMU, 0, R0, C7, C14, 1	/* clean & invalidate address */
 	ADD	$CACHELINESIZE, R0
 	CMP	R1, R0
 	BLO	dcwbinv0
-	DRAINWB
+
+	/* drain write buffer */
+	MOVW	$0, R0
+	MCR	CpMMU, 0, R0, C7, C10, 4
+
+	/* note: write-through l2 cache means lines are clean in l2 too */
+	BIC	$(CACHELINESIZE-1), R1		/* round down end address */
+	MCR	CpMMU, 1, R3, C15, C11, 4	/* start addr */
+	MCR	CpMMU, 1, R1, C15, C11, 5	/* end addr, inclusive.  go. */
+
+	MOVW	R2, CPSR			/* restore fiq/irq state */
 	RET
 
+/* invalidate entire dcache & l2 cache */
 TEXT dcinvall(SB), $-4
 	MOVW	$0, R0
-	MCR	CpMMU, 0, R0, C7, C6, 0
+	MCR	CpMMU, 0, R0, C7, C6, 0		/* invalidate dcache */
+	MCR	CpMMU, 1, R0, C15, C11, 0	/* invalidate l2 cache */
 	RET
 
+/* invalidate range in both dcache & l2 cache */
 TEXT dcinv(SB), $-4
 	MOVW	4(FP), R1
 	ADD	R0, R1
 	BIC	$(CACHELINESIZE-1), R0
 dcinv0:
-	MCR	CpMMU, 0, R0, C7, C6, 1
+	MCR	CpMMU, 0, R0, C7, C6, 1		/* invalidate dcache line */
+	MCR	CpMMU, 1, R0, C15, C11, 3	/* invalidate l2 cache line */
 	ADD	$CACHELINESIZE, R0
 	CMP	R1, R0
 	BLO	dcinv0

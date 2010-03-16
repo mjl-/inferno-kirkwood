@@ -126,7 +126,7 @@ l2print(void)
 	ulong v;
 
 	v = CPUCSREG->l2cfg;
-	print("l2: %s, ecc %s, mode %s\n", (v&L2enable) ? "on" : "off", (v&L2ecc) ? "on" : "off", (v & L2wtmode) ? "writethrough" : "writeback");
+	print("l2: %s, ecc %s, mode %s\n", (v&L2exists) ? "on" : "off", (v&L2ecc) ? "on" : "off", (v & L2wtmode) ? "writethrough" : "writeback");
 
 if(0) {
 	int i;
@@ -188,6 +188,10 @@ enum {
 	Cacheable	= 1<<3,
 	Bufferable	= 1<<2,
 	Sectiondescr	= (1<<4)|(2<<0),
+
+	/* "marvell extra features" register, for l2 cache */
+	ML2noprefetch	= 1<<24,
+	ML2enable	= 1<<22,
 };
 static void
 cacheprint(void)
@@ -215,7 +219,7 @@ static void
 mmuinit(void)
 {
 	ulong *p;
-	ulong i;
+	ulong i, v;
 
 	p = xspanalloc(16*1024, 16*1024, 0);
 	if(p == nil)
@@ -233,22 +237,29 @@ mmuinit(void)
 	p[Regbase>>20] = (Regbase&~MASK(20))|AP|Sectiondescr;
 	p[AddrPhyNand>>20] = (AddrPhyNand&~MASK(20))|AP|Sectiondescr;
 
-	/* enable mmu & l1 caches */
+	/* enable mmu, l1 cache & l2 cache */
 	ttbput((ulong)p);	/* translation table base address */
 	dacput(Manager<<0);	/* we only use dom 0, all accesses allowed */
 	fcsepidput(0);		/* pid used in mva (modified va).  always 0 for us. */
-	dclockdownput(0xfff<<4);	/* bits 3..0 set the locked Ways */
-	dcinvall();
 	tlbclear();
+
+	dclockdownput(0xfff<<4);	/* bits 3..0 set the locked Ways */
+	icinvall();
+	dcinvall();
+	cpctlput(cpctlget()&~(Icacheena|Dcacheena));
+	CPUCSREG->l2cfg |= L2exists|L2wtmode;
+	v = CPUCSREG->l2cfg;
+	USED(v);
+	mvfeatset(mvfeatget()|ML2noprefetch|ML2enable);
+
 	/* xxx should set the 8 locked down tlb entries.  for performance, but also because they now may contain bad entries. */
 	cpctlput(cpctlget()|MMUena|Icacheena|Dcacheena|Alignfault);
 }
 
-extern ulong flierp(ulong);
 void
 main(void)
 {
-	CPUCSREG->l2cfg &= ~L2enable;
+	CPUCSREG->l2cfg &= ~L2exists;
 
 	/* invalidate & enable l1 icache */
 	iclockdownput(0xfff<<4);	/* bits 3..0 set the locked Ways */

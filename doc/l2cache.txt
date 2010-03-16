@@ -1,0 +1,48 @@
+some information about the l2 cache.  there are no public docs.
+
+the following has been gathered from linux, verified against uboot
+& plan 9 code.
+
+we've taken a shortcut:  we only use the l2 cache in write through
+mode, so we do not have to undirty it separately from the dcache.
+
+when enabling/disabling the l2 cache, the dcache & icache must be off.
+
+the instructions manipulating the l2 cache take physical addresses
+(actually, that seems to depend on the last argument).
+note that the cacheline is also 32 bytes.
+
+the l2 cache can be turned on/off (and modes set) by instruction:
+
+mcr	p15, 1, r0, c15, c1, 0	// get
+mrc	p15, 1, r0, c15, c1, 0	// set
+
+meaning of bits:
+l2 enable		= 1<<22,
+l2 prefetch disable	= 1<<24
+l2 write allocate enable= 1<<28
+l2 cpu streaming enable	= 1<<29
+
+
+the instructions to clean and invalidate dirty pages:
+
+mcr	p15, 1, r0, c15, c9, 3		// clean
+mcr	p15, 1, r0, c15, c10, 3		// clean & invalidate
+mcr	p15, 1, r0, c15, c11, 3		// invalidate address
+mcr	p15, 1, r0, c15, c11, 0		// invalidate entire l2 cache
+
+the instructions below clean & invalidate a range of memory.  first
+the begin address is written.  then the end address in a separate
+instruction that only "returns" when the operation is done.  the
+end address is inclusive:  it is cleaned/invalidated too.  i don't
+know the behaviour when the lower bits are not zero, so better keep
+them zero.
+
+mcr	p15, 1, r0, c15, c9, 4		// clean range start
+mcr	p15, 1, r0, c15, c9, 5		// clean range end (inclusive), go
+
+mcr	p15, 1, r0, c15, c11, 4		// invalidate range start
+mcr	p15, 1, r0, c15, c11, 5		// invalidate range end (inclusive), go
+
+perhaps there is a clean & invalidate range instruction too.  i
+haven't seen it used, but also haven't tested for it.
