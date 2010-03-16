@@ -88,4 +88,8 @@ void	dcwbinvall(void);
 void	dcinv(void*, ulong);
 void	dcinvall(void);
 
+ulong	mvfeatget(void);
+void	mvfeatset(ulong);
+
 int	segflush(void*, ulong);
+

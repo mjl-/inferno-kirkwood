@@ -210,7 +210,8 @@ TEXT gotopc(SB), $-4
 
 TEXT idle(SB), $-4
 	MOVW	$0, R0
-	MCR	CpMMU, 0, R0, C(CpCacheCtl), C0, 4
+	MCR	CpMMU, 0, R0, C7, C10, 4		/* drain write buffer */
+	MCR	CpMMU, 0, R0, C(CpCacheCtl), C0, 4	/* wait for interrupt */
 	RET
 
 
@@ -317,41 +318,60 @@ icinv0:
 #define DRAINWB		MOVW	$0, R2; \
 			MCR	CpMMU, 0, R2, C7, C10, 4
 
+/* arm926ej-s' special test,clean,invalidate instruction does not seem to work.  walk through each way for each set. */
 TEXT dcwball(SB), $-4
 dcwball0:
-	MCR	CpMMU, 0, R15, C7, C10, 3	/* special: modifies condition flags, not r15 */
-	BNE	dcwball0
+	MOVW	$(127<<5), R1			/* start at set 128 */
+wbset:
+	ORR	$(3<<30), R1, R0		/* start at way 4 */
+wbway:
+	MCR	CpMMU, 0, R0, C7, C10, 2	/* clean set/way */
+	SUB.S	$(1<<30), R0			/* flag C for no borrow: another way */
+	BCS	wbway
+	SUB.S	$(1<<5), R1			/* flag C for no borrow: another set */
+	BCS	wbset
 	DRAINWB
 	RET
 
-TEXT dcwb0(SB), $-4
+TEXT dcwb(SB), $-4
 	MOVW	4(FP), R1
+	CMP	$(CACHESIZE), R1
+	BCS	dcwball0
 	ADD	R0, R1
 	BIC	$(CACHELINESIZE-1), R0
-dcwb00:
+dcwb0:
 	MCR	CpMMU, 0, R0, C7, C10, 1
 	ADD	$CACHELINESIZE, R0
 	CMP	R1, R0
-	BLO	dcwb00
+	BLO	dcwb0
 	DRAINWB
 	RET
 
 TEXT dcwbinvall(SB), $-4
 dcwbinvall0:
-	MCR	CpMMU, 0, R15, C7, C14, 3	/* special: modifies condition flags, not r15 */
-	BNE	dcwbinvall0
+	MOVW	$(127<<5), R1			/* start at set 128 */
+wbinvset:
+	ORR	$(3<<30), R1, R0		/* start at way 4 */
+wbinvway:
+	MCR	CpMMU, 0, R0, C7, C14, 2	/* clean & invalidate set/way */
+	SUB.S	$(1<<30), R0			/* flag C for no borrow: another way */
+	BCS	wbinvway
+	SUB.S	$(1<<5), R1			/* flag C for no borrow: another set */
+	BCS	wbinvset
 	DRAINWB
 	RET
 
-TEXT dcwbinv0(SB), $-4
+TEXT dcwbinv(SB), $-4
 	MOVW	4(FP), R1
+	CMP	$(CACHESIZE), R1
+	BCS	dcwbinvall0
 	ADD	R0, R1
 	BIC	$(CACHELINESIZE-1), R0
-dcwbinv00:
+dcwbinv0:
 	MCR	CpMMU, 0, R0, C7, C14, 1
 	ADD	$CACHELINESIZE, R0
 	CMP	R1, R0
-	BLO	dcwbinv00
+	BLO	dcwbinv0
 	DRAINWB
 	RET
 
@@ -369,4 +389,12 @@ dcinv0:
 	ADD	$CACHELINESIZE, R0
 	CMP	R1, R0
 	BLO	dcinv0
+	RET
+
+TEXT mvfeatget(SB), $-4
+	MRC	CpMMU, 1, R0, C15, C1, 0
+	RET
+
+TEXT mvfeatset(SB), $-4
+	MCR	CpMMU, 1, R0, C15, C1, 0
 	RET

@@ -244,31 +244,7 @@ mmuinit(void)
 	cpctlput(cpctlget()|MMUena|Icacheena|Dcacheena|Alignfault);
 }
 
-/*
-xxx something is wrong with flushing the dcache.
-perhaps the special test & clean cp mrc instructions _do_ modify r15?
-*/
-void dcwb0(void *, ulong);
-void dcwbinv0(void *, ulong);
-
-void
-dcwb(void *p, ulong n)
-{
-	if(0 && n > CACHESIZE/2)
-		dcwball();
-	else
-		dcwb0(p, n);
-}
-
-void
-dcwbinv(void *p, ulong n)
-{
-	if(0 && n > CACHESIZE/2)
-		dcwbinvall();
-	else
-		dcwbinv0(p, n);
-}
-
+extern ulong flierp(ulong);
 void
 main(void)
 {
@@ -314,6 +290,7 @@ main(void)
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
 	print("kirkwood %s\n\n", conf.devidstr);
 
+	print("mvfeat %#lux\n", mvfeatget());
 	l2print();
 	cacheprint();
 
