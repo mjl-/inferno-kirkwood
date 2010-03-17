@@ -191,7 +191,6 @@ enum {
 	IRQ1gpiohi0,
 	IRQ1gpiohi1,
 	IRQ1gpiohi2,
-	IRQ1gpiohi3,
 	IRQ1xor0err,
 	IRQ1xor1err,
 	IRQ1pex0err,
@@ -639,8 +638,8 @@ struct GpioReg
 	ulong	datainpol;
 	ulong	datain;
 	ulong	intrcause;
-	ulong	intrmask;
-	ulong	intrlevelmask;
+	ulong	intredgeena;
+	ulong	intrlevelena;
 };
 
 #define	WINREG	((WinReg*)AddrWin)

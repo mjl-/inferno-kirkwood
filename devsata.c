@@ -439,6 +439,16 @@ flush(void)
 	atacmd(0xea, 0, 0, 0, 0, Nodata, nil);
 }
 
+static void
+satareset(void)
+{
+	/* power up sata1 port */
+	CPUCSREG->mempm &= ~Sata1mem;
+	CPUCSREG->clockgate |= Sata1clock;
+	regreadl(&CPUCSREG->clockgate);
+
+	SATA1REG->ifccfg &= ~(1<<9);
+}
 
 static void
 satainit(void)
@@ -446,8 +456,6 @@ satainit(void)
 	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
 
-	CPUCSREG->mempm &= ~(1<<11); // power up port sata1
-	CPUCSREG->clockgate |= 1<<15; // sata1 clock enable
 	/* xxx should enable phy too, perhaps reset, and do the phy errata dance */
 
 	if((sr->sstatus & SDETmask) != SDETdevphy) {
@@ -952,7 +960,7 @@ Dev satadevtab = {
 	'S',
 	"sata",
 
-	devreset,
+	satareset,
 	satainit,
 	devshutdown,
 	sataattach,
