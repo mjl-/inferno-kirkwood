@@ -33,6 +33,7 @@ void	kbdinit(void);
 void	links(void);
 void 	microdelay(int us);
 int	pcmspecial(char *, ISAConf *);
+void	regreadl(ulong *);
 void	screeninit(void);
 void	trapinit(void);
 void	uartconsole(void);
@@ -92,4 +93,3 @@ ulong	mvfeatget(void);
 void	mvfeatset(ulong);
 
 int	segflush(void*, ulong);
-

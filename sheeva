@@ -18,7 +18,7 @@ dev
 	boot
 	flash
 	ftl
-	sdio
+	sdio	sdcard
 	sheeva
 	efuse
 	sata

@@ -5,9 +5,7 @@ support (dhcp & mount working), might read some sd cards, can read
 nand flash pages.
 
 next steps:
-- find out why jumping to eg dcflushinvalall hangs (perhaps the test & clean cache operation with r15 as arg is not right?)
-- better dcache flushing
-- l2 cache
+- l2 cache, does not seem to speed up much.  something wrong?
 - better nand support
 - delay/microdelay calibration
 - better sata support

@@ -10,6 +10,14 @@
 #include "etherif.h"
 #include "../port/flashif.h"
 
+/* read register to force a write.  (writes to soc registers are in-order within functional parts, not across them) */
+void
+regreadl(ulong *v)
+{
+	volatile ulong p = *v;
+	USED(p);
+}
+
 static char *
 devidstr(ulong v)
 {
