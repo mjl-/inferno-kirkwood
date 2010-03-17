@@ -7,8 +7,8 @@
 #include	"io.h"
 #include	"sdcard.h"
 
-static int debug = 0;
-#define dprint	if(debug)print
+#define DEBUG 0
+#define dprint	if(DEBUG)print
 
 char Enocard[] = "no card";
 
@@ -21,9 +21,10 @@ enum {
 
 enum {
 	/* transfer mode */
-	TMautocmd12	= 1<<2,
-	TMxfertohost	= 1<<4,
-	TMswwrite	= 1<<6,
+	TMdatawrite	= 1<<1,		/* write data after response, for write commands */
+	TMautocmd12	= 1<<2,		/* hardware sends cmd12 (note: doc contradicts itself)  */
+	TMxfertohost	= 1<<4,		/* data flows from sd to host */
+	TMswwrite	= 1<<6,		/* software-controlled, not dma */
 
 	/* cmd */
 #define CMDresp(x)	((x)<<0)
@@ -34,12 +35,12 @@ enum {
 
 	CMDdatacrccheck	= 1<<2,
 	CMDcmdcrccheck	= 1<<3,
-	CMDcmdindexcheck	= 1<<4,
+	CMDcmdindexcheck= 1<<4,
 	CMDdatapresent	= 1<<5,
 	CMDunexpresp	= 1<<7,
 #define CMDcmd(x)	((x)<<8)
 
-	/* hwstate */
+	/* hoststate */
 	HScmdinhibit	= 1<<0,
 	HScardbusy	= 1<<1,
 	HStxactive	= 1<<8,
@@ -65,7 +66,7 @@ enum {
 	/* swreset */
 	SRresetall	= 1<<8,
 
-	/* status */
+	/* st, status */
 	NScmdcomplete	= 1<<0,
 	NSxfercomplete	= 1<<1,
 	NSblockgapevent	= 1<<2,
@@ -81,7 +82,7 @@ enum {
 	NSunexpresp	= 1<<14,
 	NSerror		= 1<<15,
 
-	/* errstatus */
+	/* est, error status */
 	EScmdtimeout	= 1<<0,
 	EScmdcrc	= 1<<1,
 	EScmdendbit	= 1<<2,
@@ -101,6 +102,14 @@ enum {
 	AIcheckbusy	= 1<<0,
 	AIcheckindex	= 1<<1,
 #define AICMDINDEX(x)	((x)<<8)
+};
+
+enum {
+	/* sd commands */
+	CMDRead		= 17,
+	CMDReadmulti	= 18,
+	CMDWrite	= 24,
+	CMDWritemulti	= 25,
 };
 
 enum {
@@ -133,14 +142,16 @@ enum {
 	Qctl,
 	Qinfo,
 	Qdata,
+	Qstatus,
 };
 
 static
-Dirtab sdiotab[]={
+Dirtab sdiotab[] = {
 	".",		{Qdir, 0, QTDIR},	0,	0555,
 	"sdioctl",	{Qctl},			0,	0666,
 	"sdioinfo",	{Qinfo},		0,	0444,
 	"sdio",		{Qdata},		0,	0666,
+	"sdiostatus",	{Qstatus},		0,	0444,
 };
 
 static void
@@ -232,7 +243,7 @@ errstatusstr(char *p, char *e, ulong v)
 	return p;
 }
 
-char *acmd12errstatusstrs[] = {
+char *acmd12ststrs[] = {
 "acmd12notexe",
 "acmd12timeout",
 "acmd12crcerr",
@@ -243,31 +254,31 @@ char *acmd12errstatusstrs[] = {
 };
 
 static char *
-acmd12errstatusstr(char *p, char *e, ulong v)
+acmd12ststr(char *p, char *e, ulong v)
 {
 	int i;
-	for(i = 0; i < nelem(acmd12errstatusstrs); i++)
+	for(i = 0; i < nelem(acmd12ststrs); i++)
 		if(v & (1<<i))
-			p = seprint(p, e, " %q", acmd12errstatusstrs[i]);
+			p = seprint(p, e, " %q", acmd12ststrs[i]);
 	return p;
 }
 
 static void
-printstatus(char *s, ulong status, ulong errstatus, ulong acmd12errstatus)
+printstatus(char *s, ulong st, ulong est, ulong acmd12st)
 {
 	char *p, *e;
 
-	if(!debug)
+	if(!DEBUG)
 		return;
 
 	p = up->genbuf;
 	e = p+sizeof (up->genbuf);
 
-	p = statusstr(p, e, status);
+	p = statusstr(p, e, st);
 	p = seprint(p, e, ";");
-	p = errstatusstr(p, e, errstatus);
+	p = errstatusstr(p, e, est);
 	p = seprint(p, e, ";");
-	p = acmd12errstatusstr(p, e, acmd12errstatus);
+	p = acmd12ststr(p, e, acmd12st);
 	USED(p);
 
 	print("status: %s%s\n", s, up->genbuf);
@@ -299,28 +310,29 @@ errorsd(char *s)
 static int
 dmafinished(void*)
 {
+	SdioReg *r = SDIOREG;
 	ulong need = NScmdcomplete|NSdmaintr;
 
-	if((SDIOREG->status & need) == need) {
+	if((r->st & need) == need) {
 		dprint("dmadone\n");
 		return 1;
 	}
 	dprint("not dmadone\n");
-	SDIOREG->statusirqmask = NSdmaintr;
+	r->stirq = NSdmaintr;
 	return 0;
 }
 
 static int
 sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 {
-	SdioReg *reg = SDIOREG;
+	SdioReg *r = SDIOREG;
 	int i, s;
-	ulong resptype, cmdopts, txmode, v, need;
+	ulong resptype, cmdopts, mode, v, need;
 	uvlong w;
 
 	i = 0;
 	for(;;) {
-		if((reg->hwstate & (HScmdinhibit|HScardbusy)) == 0)
+		if((r->hoststate & (HScmdinhibit|HScardbusy)) == 0)
 			break;
 		if(i++ >= 50)
 			return SDCardbusy;
@@ -334,49 +346,69 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	dprint("sdcmd, isapp %d, cmd %lud, arg %#lux\n", isapp, cmd, arg);
 
 	/* clear status */
-	reg->status = ~0;
-	reg->errstatus = ~0;
-	reg->acmd12errstatus = ~0;
-	printstatus("before cmd: ", reg->status, reg->errstatus, reg->acmd12errstatus);
+	r->st = ~0;
+	r->est = ~0;
+	r->acmd12st = ~0;
+	printstatus("before cmd: ", r->st, r->est, r->acmd12st);
 
 	microdelay(1000);
 	/* prepare args & execute command */
-	reg->argcmdlo = (arg>>0) & MASK(16);
-	reg->argcmdhi = (arg>>16) & MASK(16);
+	r->arglo = (arg>>0) & MASK(16);
+	r->arghi = (arg>>16) & MASK(16);
 	cmdopts = 0;
-	txmode = 0;
-	if(cmd == 17 || cmd == 18) {
-		txmode = TMxfertohost;
-		if(cmd == 18) {
-			txmode |= TMautocmd12;
-			reg->acmd12arglo = 0;
-			reg->acmd12arghi = 0;
-			reg->acmd12idx = AIcheckbusy|AIcheckindex|AICMDINDEX(12);
-		}
+	mode = 0;
+	switch(cmd) {
+	case CMDRead:
+	case CMDReadmulti:
+		mode |= TMxfertohost;
+		/* fallthrough */
+	case CMDWrite:
+	case CMDWritemulti:
 		cmdopts = CMDdatapresent;
 	}
-	reg->txmode = txmode;
-	resptype = getresptype(isapp, cmd);
-	reg->cmd = CMDresp(resptype)|cmdopts|CMDcmd(cmd);
 
-	if(cmd == 17 || cmd == 18) {
+	switch(cmd) {
+	case CMDWrite:
+	case CMDWritemulti:
+		mode |= TMdatawrite;
+	}
+
+	switch(cmd) {
+	case CMDReadmulti:
+	case CMDWritemulti:
+		mode |= TMautocmd12;
+		r->acmd12arglo = 0;
+		r->acmd12arghi = 0;
+		r->acmd12idx = AIcheckbusy|AIcheckindex|AICMDINDEX(12);
+	}
+	r->mode = mode;
+	resptype = getresptype(isapp, cmd);
+	r->cmd = CMDresp(resptype)|cmdopts|CMDcmd(cmd);
+
+	switch(cmd) {
+	case CMDRead:
+	case CMDReadmulti:
+	case CMDWrite:
+	case CMDWritemulti:
 		/* wait for dma interrupt that signals completion */
 		tsleep(&dmar, dmafinished, nil, 5000);
 
 		need = NScmdcomplete|NSdmaintr;
-		if((reg->status & need) != need || (reg->status & (NSerror|NSunexpresp)) != 0) {
-			printstatus("dma err: ", reg->status, reg->errstatus, reg->acmd12errstatus);
+		if((r->st & need) != need || (r->st & (NSerror|NSunexpresp)) != 0) {
+			printstatus("dma err: ", r->st, r->est, r->acmd12st);
 			return SDError;
 		}
-	} else {
+		break;
+
+	default:
 		/* poll for completion/error */
 		need = NScmdcomplete;
 		i = 0;
 		for(;;) {
-			v = reg->status;
+			v = r->st;
 			if(v & (NSerror|NSunexpresp)) {
-				printstatus("error: ", v, reg->errstatus, reg->acmd12errstatus);
-				if(reg->errstatus & EScmdtimeout)
+				printstatus("error: ", v, r->est, r->acmd12st);
+				if(r->est & EScmdtimeout)
 					return SDTimeout;
 				return SDError;
 			}
@@ -384,13 +416,13 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 				break;
 			if(i++ >= 100) {
 				print("command unfinished\n");
-				printstatus("timeout: ", v, reg->errstatus, reg->acmd12errstatus);
+				printstatus("timeout: ", v, r->est, r->acmd12st);
 				return SDError;
 			}
 			tsleep(&up->sleep, return0, nil, 10);
 		}
 	}
-	printstatus("success", reg->status, reg->errstatus, reg->acmd12errstatus);
+	printstatus("success", r->st, r->est, r->acmd12st);
 
 	/* fetch the response */
 	memset(c->resp, 0, sizeof c->resp);
@@ -399,26 +431,26 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 		break;
 	case CMDresp136:
 		w = 0;
-		w |= (uvlong)reg->resp[7] & MASK(14);
-		w |= (uvlong)reg->resp[6]<<(0*16+14);
-		w |= (uvlong)reg->resp[5]<<(1*16+14);
-		w |= (uvlong)reg->resp[4]<<(2*16+14);
-		w |= (uvlong)reg->resp[3]<<(3*16+14);
+		w |= (uvlong)r->resp[7] & MASK(14);
+		w |= (uvlong)r->resp[6]<<(0*16+14);
+		w |= (uvlong)r->resp[5]<<(1*16+14);
+		w |= (uvlong)r->resp[4]<<(2*16+14);
+		w |= (uvlong)r->resp[3]<<(3*16+14);
 		putle(c->resp+1, w, 8);
 
 		w = 0;
-		w |= (uvlong)reg->resp[3]>>2;
-		w |= (uvlong)reg->resp[2]<<(0*16+14);
-		w |= (uvlong)reg->resp[1]<<(1*16+14);
-		w |= (uvlong)reg->resp[0]<<(2*16+14);
+		w |= (uvlong)r->resp[3]>>2;
+		w |= (uvlong)r->resp[2]<<(0*16+14);
+		w |= (uvlong)r->resp[1]<<(1*16+14);
+		w |= (uvlong)r->resp[0]<<(2*16+14);
 		putle(c->resp+1+8, w, 8);
 		break;
 	case CMDresp48:
 	case CMDresp48busy:
 		w = 0;
-		w |= (uvlong)reg->resp[2] & MASK(6);
-		w |= (uvlong)reg->resp[1]<<(0*16+6);
-		w |= (uvlong)reg->resp[0]<<(1*16+6);
+		w |= (uvlong)r->resp[2] & MASK(6);
+		w |= (uvlong)r->resp[1]<<(0*16+6);
+		w |= (uvlong)r->resp[0]<<(1*16+6);
 		putle(c->resp+1, w, 4);
 		break;
 	}
@@ -448,10 +480,10 @@ sdinit(void)
 {
 	int i, s;
 	ulong v;
-	SdioReg *reg = SDIOREG;
+	SdioReg *r = SDIOREG;
 
 	sdclock(400*1000);
-	reg->hostctl &= ~HChighspeed;
+	r->hostctl &= ~HChighspeed;
 
 	/* force card to idle state */
 	if(sdcmd(&card, 0, 0) < 0)
@@ -539,7 +571,7 @@ sdinit(void)
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
 		card.size *= 1<<card.csd.readblocklength;
-		kprint("csd0, block length read/write %d/%d, size %lld bytes, eraseblock %d\n",
+		print("csd0, block length read/write %d/%d, size %lld bytes, eraseblock %d\n",
 			1<<card.csd.readblocklength, 
 			1<<card.csd.writeblocklength,
 			card.size,
@@ -547,13 +579,13 @@ sdinit(void)
 	} else {
 		card.bs = 512;
 		card.size = (vlong)(card.csd.size+1)*card.bs*1024;
-		kprint("csd1, fixed 512 block length, size %lld bytes, eraseblock fixed 512\n", card.size);
+		print("csd1, fixed 512 block length, size %lld bytes, eraseblock fixed 512\n", card.size);
 	}
 
 	if(card.sdhc) {
 		dprint("enabling sdhc & setting clock to 50mhz\n");
 		sdclock(50*1000*1000);
-		reg->hostctl |= HChighspeed;
+		r->hostctl |= HChighspeed;
 	} else {
 		dprint("leaving sdhc off & setting clock to 25mhz\n");
 		sdclock(25*1000*1000);
@@ -569,21 +601,19 @@ sdinit(void)
 	if(sdcmd(&card, 16, card.bs) < 0)
 		errorsd("setting block length");
 
+	sdiotab[Qdata].length = card.size;
 	card.valid = 1;
-	kprint("%s", cardstr(&card, up->genbuf, sizeof (up->genbuf)));
+	print("%s", cardstr(&card, up->genbuf, sizeof (up->genbuf)));
 }
 
 
 static long
 sdio(uchar *a, long n, vlong offset, int iswrite)
 {
-	SdioReg *reg = SDIOREG;
-	ulong arg;
+	SdioReg *r = SDIOREG;
+	ulong cmd, arg;
 
-	if(iswrite)
-		error("not yet implemented");
-
-	if(!card.valid)
+	if(card.valid == 0)
 		error(Enocard);
 
 	/* xxx we should cover this cases with a buffer, and then use the same code to allow non-sector-aligned reads? */
@@ -596,10 +626,10 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 		error("not multiple of sector size");
 
 	dcwbinv(a, n);
-	reg->dmaaddrlo = (ulong)a & MASK(16);
-	reg->dmaaddrhi = ((ulong)a>>16) & MASK(16);
-	reg->blksize = card.bs;
-	reg->blkcount = n/card.bs;
+	r->dmaaddrlo = (ulong)a & MASK(16);
+	r->dmaaddrhi = ((ulong)a>>16) & MASK(16);
+	r->blksize = card.bs;
+	r->blkcount = n/card.bs;
 	if(card.sdhc)
 		arg = offset/card.bs;
 	else
@@ -608,7 +638,8 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	dprint("sdio, a %#lux, dmaddrlo %#lux dmaadrhi %#lux blksize %lud blkcount %lud cmdarg %#lux\n",
 		a, (ulong)a & MASK(16), ((ulong)a>>16) & MASK(16), card.bs, n/card.bs, arg);
 	//tsleep(&up->sleep, return0, nil, 250);
-	if(sdcmd(&card, 18, arg) < 0)
+	cmd = iswrite ? CMDWritemulti : CMDReadmulti;
+	if(sdcmd(&card, cmd, arg) < 0)
 		errorsd(iswrite ? "writing" : "reading");
 
 	return n;
@@ -617,23 +648,23 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 static void
 sdiointr(Ureg*, void*)
 {
-	SdioReg *reg = SDIOREG;
+	SdioReg *r = SDIOREG;
 	char buf[128];
 	char *p, *e;
 
-	if(debug) {
+	if(DEBUG) {
 		iprint("sdio intr %lux %lux %lux %lux\n",
-			reg->status,
-			reg->status & reg->statusirqmask,
-			reg->errstatus,
-			reg->errstatus & reg->errstatusirqmask);
+			r->st,
+			r->st & r->stirq,
+			r->est,
+			r->est & r->estirq);
 
 		p = buf;
 		e = p+sizeof (buf);
 
-		p = statusstr(p, e, reg->status);
+		p = statusstr(p, e, r->st);
 		p = seprint(p, e, ";");
-		p = errstatusstr(p, e, reg->errstatus);
+		p = errstatusstr(p, e, r->est);
 		USED(p);
 
 		iprint("intr: %s\n", buf);
@@ -645,48 +676,48 @@ sdiointr(Ureg*, void*)
 	 * before this interrupt is handled.
 	 */
 	wakeup(&dmar);
-	reg->statusirqmask &= ~NSdmaintr;
+	r->stirq &= ~NSdmaintr;
 	intrclear(Irqlo, IRQ0sdio);
 }
 
 static void
 sdioreset(void)
 {
-	SdioReg *reg = SDIOREG;
+	SdioReg *r = SDIOREG;
 
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
-	reg->statusirqmask = 0;
-	reg->errstatusirqmask = 0;
+	r->stirq = 0;
+	r->estirq = 0;
 	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
 static void
 sdioinit(void)
 {
-	SdioReg *reg = SDIOREG;
+	SdioReg *r = SDIOREG;
 
 	card.valid = 0;
 
 	/* reset the bus, forcing all cards to idle state */
-	reg->swreset = SRresetall;
+	r->swreset = SRresetall;
 	tsleep(&up->sleep, return0, nil, 50);
 
 	sdclock(25*1000*1000);
 
 	/* configure host controller */
-	reg->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15)|HCtimeoutenable;
+	r->hostctl = HCpushpull|HCcardtypememonly|HCbigendian|HCdatawidth4|HCtimeout(15)|HCtimeoutenable;
 
 	/* clear status */
-	reg->status = ~0;
-	reg->errstatus = ~0;
+	r->st = ~0;
+	r->est = ~0;
 
 	/* enable most status reporting */
-	reg->statusmask = ~(NStxready|NSfifo8wavail);
-	reg->errstatusmask = ~0;
+	r->stena = ~(NStxready|NSfifo8wavail);
+	r->estena = ~0;
 
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
-	reg->statusirqmask = 0;
-	reg->errstatusirqmask = 0;
+	r->stirq = 0;
+	r->estirq = 0;
 }
 
 static Chan*
@@ -723,6 +754,7 @@ static long
 sdioread(Chan* c, void* a, long n, vlong offset)
 {
 	char *buf, *p, *e;
+	SdioReg *r = SDIOREG;
 
 	switch((ulong)c->qid.path){
 	case Qdir:
@@ -746,6 +778,33 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 		n = sdio(a, n, offset, 0);
 		dprint("returning %ld bytes\n", n);
 		break;
+	case Qstatus:
+		p = buf = smalloc(READSTR);
+		e = p+READSTR;
+
+		p = seprint(p, e, "st:       ");
+		p = statusstr(p, e, r->st);
+		p = seprint(p, e, "\nest:      ");
+		p = errstatusstr(p, e, r->est);
+		p = seprint(p, e, "\nacmd12st: ");
+		p = acmd12ststr(p, e, r->acmd12st);
+
+		p = seprint(p, e, "\nstena:    ");
+		p = statusstr(p, e, r->stena);
+		p = seprint(p, e, "\nestena:   ");
+		p = errstatusstr(p, e, r->estena);
+
+		p = seprint(p, e, "\nstirq:    ");
+		p = statusstr(p, e, r->stirq);
+		p = seprint(p, e, "\nestirq:   ");
+		p = errstatusstr(p, e, r->estirq);
+
+		p = seprint(p, e, "\nhoststate %#lux\n", r->hoststate);
+		USED(p);
+
+		n = readstr(offset, a, n, buf);
+		free(buf);
+		break;
 	default:
 		n = 0;
 		break;
@@ -754,13 +813,13 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 }
 
 enum {
-	CMreset, CMinit, CMdebug,
+	CMreset, CMinit, CMclean,
 };
 static Cmdtab sdioctl[] = 
 {
 	CMreset,	"reset",	1,
 	CMinit,		"init",		1,
-	CMdebug,	"debug",	2,
+	CMclean,	"clean",	1,
 };
 
 static long
@@ -768,6 +827,7 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 {
 	Cmdbuf *cb;
 	Cmdtab *ct;
+	SdioReg *r = SDIOREG;
 
 	switch((ulong)c->qid.path){
 	case Qctl:
@@ -787,13 +847,11 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 		case CMinit:
 			sdinit();
 			break;
-		case CMdebug:
-			if(strcmp(cb->f[1], "on") == 0)
-				debug = 1;
-			else if(strcmp(cb->f[1], "off") == 0)
-				debug = 0;
-			else
-				error(Ebadctl);
+		case CMclean:
+			r->st = ~0;
+			r->est = ~0;
+			r->acmd12st = ~0;
+			break;
 		}
 		poperror();
 		free(cb);

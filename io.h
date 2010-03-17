@@ -581,26 +581,26 @@ struct SdioReg
 	ulong	dmaaddrhi;
 	ulong	blksize;
 	ulong	blkcount;
-	ulong	argcmdlo;
-	ulong	argcmdhi;
-	ulong	txmode;
-	ulong	cmd;
+	ulong	arglo;
+	ulong	arghi;
+	ulong	mode;
+	ulong	cmd;			/* cmds, write starts transaction */
 	ulong	resp[8];
 	ulong	fifo;
 	ulong	crc7rsp;
-	ulong	hwstate;
+	ulong	hoststate;
 	ulong	pad0;
 	ulong	hostctl;
 	ulong	blkgapctl;
 	ulong	clkctl;
 	ulong	swreset;
-	ulong	status;
-	ulong	errstatus;
-	ulong	statusmask;
-	ulong	errstatusmask;
-	ulong	statusirqmask;
-	ulong	errstatusirqmask;
-	ulong	acmd12errstatus;
+	ulong	st;			/* status */
+	ulong	est;			/* error status */
+	ulong	stena;			/* status enable */
+	ulong	estena;			/* error status enable */
+	ulong	stirq;			/* status irq enable */
+	ulong	estirq;			/* error status irq enable */
+	ulong	acmd12st;		/* auto cmd 12 status */
 	ulong	currbyteleft;
 	ulong	currblkleft;
 	ulong	acmd12arglo;

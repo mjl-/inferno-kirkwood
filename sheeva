@@ -98,6 +98,7 @@ root
 	/chan	/
 	/dev	/
 	/dis	/
+	/dis/disk	/
 	/env	/
 	/fd	/
 	/keydb	/
@@ -160,6 +161,7 @@ root
 	/dis/dossrv.dis
 	/dis/zeros.dis
 
+	/dis/disk/kfs.dis
 	/dis/sh/std.dis
 
 	/dis/ip/dhcp.dis
