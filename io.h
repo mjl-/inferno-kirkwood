@@ -586,7 +586,7 @@ struct SdioReg
 	ulong	cmd;			/* cmds, write starts transaction */
 	ulong	resp[8];
 	ulong	fifo;
-	ulong	crc7rsp;
+	ulong	crc7;
 	ulong	hoststate;
 	ulong	pad0;
 	ulong	hostctl;

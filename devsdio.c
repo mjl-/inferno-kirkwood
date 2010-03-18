@@ -3,11 +3,14 @@
  *
  * todo:
  * - abort command on error during sleep.
+ * - make sdio() split transaction when it is huge.
  * - better error handling
  * - hook into devsd.c?
  * - use interrupts for all commands?  should be better than polling.
  * - see if we can detect device inserts/ejects?  yes, by sd_cd gpio pin (on mpp47).
  * - test with non-high capacity sd cards.  i think it does need different code.
+ * - ctl commands for erasing?
+ * - erase before writing big buffer?
  */
 
 #include	"u.h"
@@ -19,7 +22,7 @@
 #include	"io.h"
 #include	"sdcard.h"
 
-#define DEBUG 0
+#define DEBUG 1
 #define dprint	if(DEBUG)print
 
 char Enocard[] = "no card";
@@ -29,6 +32,22 @@ enum {
 	SDTimeout	= -1,
 	SDCardbusy	= -2,
 	SDError		= -3,
+
+	/* expected response to command */
+	R0	= 0,
+	R1,
+	R1b,
+	R2,
+	R3,
+	R6,
+	R7,
+
+	/* flags for cmd and cmddma */
+	Fapp	= 1<<0,		/* app-specific command */
+	Fappdata= 1<<1,		/* app-specific data command */
+	Fdmad2h	= 1<<2,		/* dma from device to host */
+	Fdmah2d	= 1<<3,		/* dma from host to device */
+	Fmulti	= 1<<4,		/* multiple blocks, use auto cmd 12 to stop transfer */
 };
 
 enum {
@@ -40,10 +59,10 @@ enum {
 	TMswwrite	= 1<<6,		/* software-controlled, not dma */
 
 	/* cmd */
-	CMDrespnone	= 0<<0,
-	CMDresp136	= 1<<0,
-	CMDresp48	= 2<<0,
-	CMDresp48busy	= 3<<0,
+	Respnone	= 0<<0,
+	Resp136		= 1<<0,
+	Resp48		= 2<<0,
+	Resp48busy	= 3<<0,
 
 	CMDdatacrccheck	= 1<<2,
 	CMDcmdcrccheck	= 1<<3,
@@ -122,6 +141,8 @@ enum {
 	CMDReadmulti	= 18,
 	CMDWrite	= 24,
 	CMDWritemulti	= 25,
+
+	ACMDGetscr	= 51,
 };
 
 enum {
@@ -161,48 +182,25 @@ Dirtab sdiotab[] = {
 	"sdiostatus",	{Qstatus},		0,	0444,
 };
 
-static void
-putle(uchar *p, uvlong v, int n)
-{
-	while(n-- > 0) {
-		*p++ = v;
-		v >>= 8;
-	}
-}
-
-/* map commands to expected responses */
-#define B(i)	(1ULL<<i)
-static uvlong resp136 = B(10)|B(9)|B(2);
-static uvlong resp48busy = B(38)|B(29)|B(28)|B(12)|B(7);
-static uvlong respnone = B(15)|B(4)|B(0);
-static ulong
-getresptype(int isapp, ulong cmd)
-{
-	uvlong v;
-
-	if(isapp)
-		return CMDresp48;
-
-	v = 1ULL<<cmd;
-	if(resp136 & v) return CMDresp136;
-	if(resp48busy & v) return CMDresp48busy;
-	if(respnone & v) return CMDrespnone;
-	return CMDresp48;
-}
 
 /* for bits in st, est, acmd12st registers */
 static char *statusstrs[] = {
-"cmdcomplete", "xfercomplete", "blockgapevent", "dmaintr", "txready", "rxready", "", "",
-"cardintr", "readwaiton", "fifo8wfull", "fifo8wavail", "suspended", "autocmd12done", "unexpresp", "errorintr",
+"cmdcomplete", "xfercomplete", "blockgapevent", "dmaintr",
+"txready", "rxready", "", "",
+"cardintr", "readwaiton", "fifo8wfull", "fifo8wavail",
+"suspended", "autocmd12done", "unexpresp", "errorintr",
 };
 
 static char *errstatusstrs[] = {
-"cmdtimeout", "cmdcrc", "cmdendbit", "cmdindex", "datatimeout", "rddatacrc", "rddataend", "",
-"autocmd12", "cmdstartbit", "xfersize", "resptbit", "crcendbit", "crcstartbit", "crcstatus",
+"cmdtimeout", "cmdcrc", "cmdendbit", "cmdindex",
+"datatimeout", "rddatacrc", "rddataend", "",
+"autocmd12", "cmdstartbit", "xfersize", "resptbit",
+"crcendbit", "crcstartbit", "crcstatus",
 };
 
 static char *acmd12ststrs[] = {
-"acmd12notexe", "acmd12timeout", "acmd12crcerr", "acmd12endbiterr", "acmd12indexerr", "acmd12resptbi", "acmd12respstartbiterr",
+"acmd12notexe", "acmd12timeout", "acmd12crcerr", "acmd12endbiterr",
+"acmd12indexerr", "acmd12resptbi", "acmd12respstartbiterr",
 };
 
 static char*
@@ -285,12 +283,18 @@ dmadone(void*)
 	return 0;
 }
 
+/* keep in sync with R* contants */
+static ulong resptypes[] = {
+Respnone, Resp48, Resp48busy, Resp136, Resp48, Resp48, Resp48,
+};
 static int
-sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
+sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 {
 	SdioReg *r = SDIOREG;
 	int i, s;
-	ulong resptype, cmdopts, mode, v, need;
+	ulong acmd;
+	ulong cmdopts, mode;
+	ulong need, v;
 	uvlong w;
 
 	i = 0;
@@ -302,11 +306,14 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 		tsleep(&up->sleep, return0, nil, 10);
 	}
 
-	/* "next command is sd application specific" */
-	if(isapp && (s = sdcmd0(c, 0, 55, card.rca<<16)) < 0)
-		return s;
-
-	dprint("sdcmd, isapp %d, cmd %lud, arg %#lux\n", isapp, cmd, arg);
+	if(fl & (Fapp|Fappdata)) {
+		acmd = 55;
+		if(fl & Fappdata)
+			acmd = 56;
+		s = sdcmd(c, acmd, card.rca<<16, R1, 0);
+		if(s < 0)
+			return s;
+	}
 
 	/* clear status */
 	r->st = ~0;
@@ -318,41 +325,30 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 	/* prepare args & execute command */
 	r->arglo = (arg>>0) & MASK(16);
 	r->arghi = (arg>>16) & MASK(16);
-	cmdopts = 0;
+	cmdopts = CMDunexpresp;
 	mode = 0;
-	switch(cmd) {
-	case CMDRead:
-	case CMDReadmulti:
+	if(fl & Fdmad2h)
 		mode |= TMxfertohost;
-		/* fallthrough */
-	case CMDWrite:
-	case CMDWritemulti:
-		cmdopts = CMDdatapresent;
-	}
-
-	switch(cmd) {
-	case CMDWrite:
-	case CMDWritemulti:
+	if(fl & Fdmah2d)
 		mode |= TMdatawrite;
-	}
-
-	switch(cmd) {
-	case CMDReadmulti:
-	case CMDWritemulti:
+	if(fl & Fmulti) {
 		mode |= TMautocmd12;
 		r->acmd12arglo = 0;
 		r->acmd12arghi = 0;
 		r->acmd12idx = AIcheckbusy|AIcheckindex|(12<<AIcmdshift);
 	}
+	if(fl & (Fdmad2h|Fdmah2d))
+		cmdopts |= CMDdatapresent;
+	if(fl & Fdmad2h)
+		cmdopts |= CMDdatacrccheck;
+	if(rt != R0 && rt != R3)
+		cmdopts |= CMDcmdcrccheck;
+	if(rt != R0 && rt != R2 && rt != R3)
+		cmdopts |= CMDcmdindexcheck;
 	r->mode = mode;
-	resptype = getresptype(isapp, cmd);
-	r->cmd = (cmd<<CMDshift)|cmdopts|resptype;
+	r->cmd = (cmd<<CMDshift)|cmdopts|resptypes[rt];
 
-	switch(cmd) {
-	case CMDRead:
-	case CMDReadmulti:
-	case CMDWrite:
-	case CMDWritemulti:
+	if(fl & (Fdmad2h|Fdmah2d)) {
 		/* wait for dma interrupt that signals completion */
 		while(waserror())
 			{}
@@ -364,9 +360,7 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 			printstatus("dma error: ", r->st, r->est, r->acmd12st);
 			return SDError;
 		}
-		break;
-
-	default:
+	} else {
 		/* poll for completion/error */
 		need = Scmdcomplete;
 		i = 0;
@@ -392,55 +386,58 @@ sdcmd0(Card *c, int isapp, ulong cmd, ulong arg)
 
 	/* fetch the response */
 	memset(c->resp, 0, sizeof c->resp);
-	switch(resptype) {
-	case CMDrespnone:
+	switch(resptypes[rt]) {
+	case Respnone:
 		break;
-	case CMDresp136:
-		w = 0;
-		w |= (uvlong)r->resp[7] & MASK(14);
-		w |= (uvlong)r->resp[6]<<(0*16+14);
-		w |= (uvlong)r->resp[5]<<(1*16+14);
-		w |= (uvlong)r->resp[4]<<(2*16+14);
-		w |= (uvlong)r->resp[3]<<(3*16+14);
-		putle(c->resp+1, w, 8);
+	case Resp136:
+		c->resp[0] = (uvlong)r->resp[0]>>10;
 
 		w = 0;
-		w |= (uvlong)r->resp[3]>>2;
-		w |= (uvlong)r->resp[2]<<(0*16+14);
-		w |= (uvlong)r->resp[1]<<(1*16+14);
-		w |= (uvlong)r->resp[0]<<(2*16+14);
-		putle(c->resp+1+8, w, 8);
+		w |= (uvlong)r->resp[4]>>10;
+		w |= (uvlong)r->resp[3]<<(70-64);
+		w |= (uvlong)r->resp[2]<<(86-64);
+		w |= (uvlong)r->resp[1]<<(102-64);
+		w |= (uvlong)r->resp[0]<<(118-64);
+		c->resp[1] = w;
+
+		w = r->crc7<<1;
+		w |= ((uvlong)r->resp[7] & MASK(14))<<8;
+		w |= (uvlong)r->resp[6]<<22;
+		w |= (uvlong)r->resp[5]<<38;
+		w |= (uvlong)r->resp[4]<<54;
+		c->resp[2] = w;
+
 		break;
-	case CMDresp48:
-	case CMDresp48busy:
-		w = 0;
-		w |= (uvlong)r->resp[2] & MASK(6);
-		w |= (uvlong)r->resp[1]<<(0*16+6);
-		w |= (uvlong)r->resp[0]<<(1*16+6);
-		putle(c->resp+1, w, 4);
+	case Resp48:
+	case Resp48busy:
+		w = r->crc7<<1;
+		w |= ((uvlong)r->resp[2] & MASK(6))<<8;
+		w |= (uvlong)r->resp[1]<<14;
+		w |= (uvlong)r->resp[0]<<30;
+		c->resp[0] = 0;
+		c->resp[1] = 0;
+		c->resp[2] = w;
 		break;
 	}
 	return 0;
 }
 
 static int
-sdcmd(Card *c, ulong cmd, ulong arg)
+sdcmddma(Card *c, ulong cmd, ulong arg, void *a, int blsz, int nbl, int resp, ulong fl)
 {
-	c->lastisapp = 0;
-	c->lastcmd = cmd;
-	c->lasterr = sdcmd0(c, 0, cmd, arg);
-	return c->lasterr;
-}
+	SdioReg *r = SDIOREG;
 
-static int
-sdacmd(Card *c, ulong cmd, ulong arg)
-{
-	c->lastisapp = 1;
-	c->lastcmd = cmd;
-	c->lasterr = sdcmd0(c, 1, cmd, arg);
-	return c->lasterr;
+	dcwbinv(a, blsz*nbl);
+	r->dmaaddrlo = (ulong)a & MASK(16);
+	r->dmaaddrhi = ((ulong)a>>16) & MASK(16);
+	r->blksize = blsz;
+	r->blkcount = nbl;
+	//tsleep(&up->sleep, return0, nil, 250);
+	dprint("sdio, a %#lux, dmaddrlo %#lux dmaadrhi %#lux blksize %d blkcount %d cmdarg %#lux\n",
+		a, (ulong)a & MASK(16), ((ulong)a>>16) & MASK(16), blsz, nbl, arg);
+	//tsleep(&up->sleep, return0, nil, 250);
+	return sdcmd(c, cmd, arg, resp, fl);
 }
-
 
 static void
 sdclock(ulong v)
@@ -459,7 +456,7 @@ sdinit(void)
 	r->hostctl &= ~HChighspeed;
 
 	/* force card to idle state */
-	if(sdcmd(&card, 0, 0) < 0)
+	if(sdcmd(&card, 0, 0, R0, 0) < 0)
 		errorsd("reset failed");
 
 	/*
@@ -470,14 +467,15 @@ sdinit(void)
 	card.sd2 = 0;
 	card.sdhc = 0;
 	card.rca = 0;
-	s = sdcmd(&card, 8, CMD8voltage|CMD8pattern);
+	s = sdcmd(&card, 8, CMD8voltage|CMD8pattern, R7, 0);
 	if(s == SDOk) {
 		card.sd2 = 1;
-		v = bits(card.resp+1, 31, 0);
+		v = card.resp[2]>>8;
 		if((v & CMD8patternmask) != CMD8pattern)
 			errorsd("sd check pattern mismatch");
-		if((v & CMD8voltagemask) != CMD8voltage)
+		if((v & CMD8voltagemask) != CMD8voltage) {
 			errorsd("sd voltage not supported");
+		}
 	} else if(s != SDTimeout)
 		errorsd("voltage exchange failed");
 
@@ -490,7 +488,7 @@ sdinit(void)
 	i = 0;
 	for(;;) {
 		v = ACMD41sdhcsupported|ACMD41voltagewindow;
-		s = sdacmd(&card, 41, v);
+		s = sdcmd(&card, 41, v, R3, Fapp);
 		if(s == SDTimeout) {
 			if(card.sd2)
 				errorsd("sd >=2.00 card");
@@ -499,7 +497,7 @@ sdinit(void)
 		}
 		if(s < 0)
 			errorsd("exchange voltage/sdhc support info");
-		v = bits(card.resp+1, 31, 0);
+		v = card.resp[2]>>8;
 		if((v & ACMD41voltagewindow) == 0)
 			errorsd("voltage not supported");
 		if(v & ACMD41ready) {
@@ -515,17 +513,17 @@ sdinit(void)
 	if(card.mmc)
 		error("mmc cards not yet supported"); // xxx p14 says this involves sending cmd1
 
-	if(sdcmd(&card, 2, 0) < 0)
+	if(sdcmd(&card, 2, 0, R2, 0) < 0)
 		errorsd("card identification");
 	if(parsecid(&card.cid, card.resp) < 0)
 		errorsd("bad cid register");
 
 	i = 0;
 	for(;;) {
-		if(sdcmd(&card, 3, 0) < 0)
+		if(sdcmd(&card, 3, 0, R6, 0) < 0)
 			errorsd("getting relative address");
-		card.rca = bits(card.resp+1, 31, 16);
-		v = bits(card.resp+1, 15, 0);
+		card.rca = (card.resp[2]>>24) & MASK(16);
+		v = (card.resp[2]>>8) & MASK(16);
 		dprint("have card rca %ux, status %lux\n", card.rca, v);
 		USED(v);
 		if(card.rca != 0)
@@ -534,7 +532,7 @@ sdinit(void)
 			errorsd("card insists on invalid rca 0");
 	}
 
-	if(sdcmd(&card, 9, card.rca<<16) < 0)
+	if(sdcmd(&card, 9, card.rca<<16, R2, 0) < 0)
 		errorsd("get csd");
 	if(parsecsd(&card.csd, card.resp) < 0)
 		errorsd("bad csd register");
@@ -564,14 +562,20 @@ sdinit(void)
 		sdclock(25*1000*1000);
 	}
 
-	if(sdcmd(&card, 7, card.rca<<16) < 0)
+	if(sdcmd(&card, 7, card.rca<<16, R1b, 0) < 0)
 		errorsd("selecting card");
 
+if(0){	
+	uchar *p = malloc(512);
+	if(sdcmddma(&card, 55, 1<<0, p, 512, 1, R1, Fappdata|Fdmad2h) < 0)
+		errorsd("read scr");
+}
+
 	/* xxx have to check if this is supported by card.  in scr register */
-	if(sdacmd(&card, 6, (1<<1)) < 0)
+	if(sdcmd(&card, 6, (1<<1), R1, Fapp) < 0)
 		errorsd("setting buswidth to 4-bit");
 
-	if(sdcmd(&card, 16, card.bs) < 0)
+	if(sdcmd(&card, 16, card.bs, R1, 0) < 0)
 		errorsd("setting block length");
 
 	sdiotab[Qdata].length = card.size;
@@ -583,8 +587,7 @@ sdinit(void)
 static long
 sdio(uchar *a, long n, vlong offset, int iswrite)
 {
-	SdioReg *r = SDIOREG;
-	ulong cmd, arg;
+	ulong cmd, arg, fl;
 
 	if(card.valid == 0)
 		error(Enocard);
@@ -598,23 +601,14 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	if(n % card.bs != 0)
 		error("not multiple of sector size");
 
-	dcwbinv(a, n);
-	r->dmaaddrlo = (ulong)a & MASK(16);
-	r->dmaaddrhi = ((ulong)a>>16) & MASK(16);
-	r->blksize = card.bs;
-	r->blkcount = n/card.bs;
+	cmd = iswrite ? CMDWritemulti : CMDReadmulti;
+	fl = iswrite ? Fdmah2d : Fdmad2h;
 	if(card.sdhc)
 		arg = offset/card.bs;
 	else
 		arg = offset;
-	//tsleep(&up->sleep, return0, nil, 250);
-	dprint("sdio, a %#lux, dmaddrlo %#lux dmaadrhi %#lux blksize %lud blkcount %lud cmdarg %#lux\n",
-		a, (ulong)a & MASK(16), ((ulong)a>>16) & MASK(16), card.bs, n/card.bs, arg);
-	//tsleep(&up->sleep, return0, nil, 250);
-	cmd = iswrite ? CMDWritemulti : CMDReadmulti;
-	if(sdcmd(&card, cmd, arg) < 0)
-		errorsd(iswrite ? "writing" : "reading");
-
+	if(sdcmddma(&card, cmd, arg, a, card.bs, n/card.bs, R1, fl|Fmulti) < 0)
+		errorsd("io");
 	return n;
 }
 

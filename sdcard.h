@@ -1,17 +1,14 @@
-enum {
-	Respmax		= (136+8-1)/8,
-};
-
 typedef struct Card Card;
 typedef struct Cid Cid;
 typedef struct Csd Csd;
+typedef struct Scr Scr;
 
 struct Cid
 {
 	uint	mid;		/* manufacturer id */
 	char	oid[2+1];	/* oem id */
 	char	prodname[5+1];	/* product name */
-	uint	rev;		/* product revision */
+	ulong	rev;		/* product revision */
 	ulong	serial;
 	int	year;
 	int	mon;
@@ -44,6 +41,25 @@ struct Csd
 	int	fileformat;
 };
 
+enum {
+	/* Scr.spec */
+	Spec101,
+	Spec110,
+	Spec200,
+
+	/* Scr.buswidth */
+	Bus1bit		= 1<<0,
+	Bus4bit		= 1<<2,
+};
+struct Scr
+{
+	uchar	vers;			/* version of scr struct */
+	uchar	spec;			/* sd physical layer version supported by card */
+	uchar	dataerased;		/* data after erase, 0 or 1 */
+	uchar	sec;			/* sd security supported */
+	uchar	buswidth;		/* data bus width */
+};
+
 struct Card {
 	int	valid;
 	Cid	cid;
@@ -54,17 +70,16 @@ struct Card {
 	int	sd2;
 	int	sdhc;
 	uint	rca;
-	uchar	resp[Respmax];
+	uvlong	resp[3];
 	int	lastcmd;
 	int	lastisapp;
 	int	lasterr;
 };
 
-ulong	bits(uchar *p, int msb, int lsb);
-
-int	parsecid(Cid *c, uchar *r);
+int	parsecid(Cid *c, uvlong *r);
 char*	cidstr(char *p, char *e, Cid *c);
-int	parsecsd(Csd *c, uchar *r);
+int	parsecsd(Csd *c, uvlong *r);
 char*	csdstr(char *p, char *e, Csd *c);
 char*	cardtype(Card *c);
 char*	cardstr(Card *c, char *buf, int n);
+int	parsescr(Scr *s, uvlong *r);

@@ -16,55 +16,49 @@ min(int a, int b)
 	return b;
 }
 
-ulong
-bits(uchar *p, int msb, int lsb)
+static ulong
+bits(uvlong *r, int h, int l)
 {
-	ulong v;
-	int nbits, o, n;
+	uvlong v;
+	int o;
+	int n;
 
-	nbits = msb-lsb+1;
-	n = lsb/8;
-	p += n;
-	lsb -= n*8;
-
-	n = min(nbits, 8-lsb);
-	nbits -= n;
-	v = (*p++>>lsb) & MASK(n);
-	o = n;
-
-	while(nbits > 0) {
-		n = min(nbits, 8);
-		nbits -= n;
-		v |= ((ulong)*p++ & MASK(n)) << o;
-		o += n;
+	v = 0;
+	o = 0;
+	r += 2;
+	while(h > l && l >= 0) {
+		if(l < 64) {
+			n = min(h, 63)-l+1;
+			v |= ((*r>>l) & ((1ULL<<n)-1)) << o;
+			l += n;
+			o += n;
+		}
+		h -= 64;
+		l -= 64;
+		r--;
 	}
 	return v;
 }
 
 int
-parsecid(Cid *c, uchar *r)
+parsecid(Cid *c, uvlong *r)
 {
-	uchar *p;
+	int i;
 
 	c->mon		= bits(r, 11, 8);
 	c->year		= 2000 + bits(r, 19, 16)*10 + bits(r, 15, 12);
 	c->serial	= bits(r, 55, 24);
 	c->rev		= bits(r, 63, 56);
 
-	p = r+64/8;
-	c->prodname[0] = p[4];
-	c->prodname[1] = p[3];
-	c->prodname[2] = p[2];
-	c->prodname[3] = p[1];
-	c->prodname[4] = p[0];
+	for(i = 0; i < 5; i++)
+		c->prodname[i] = bits(r, 104-i*8-1, 104-i*8-8);
 	c->prodname[5] = '\0';
 
-	p = r+104/8;
-	c->oid[0] = p[1];
-	c->oid[1] = p[0];
+	c->oid[0] = bits(r, 119, 112);
+	c->oid[1] = bits(r, 111, 104);
 	c->oid[2] = '\0';
 
-	c->mid		= bits(r, 127, 120);
+	c->mid = bits(r, 127, 120);
 	return 0;
 }
 
@@ -72,7 +66,7 @@ char*
 cidstr(char *p, char *e, Cid *c)
 {
 	return seprint(p, e,
-		"product %s, rev %#ux, serial %#lux, made %04d-%02d, oem %s, manufacturer %#ux\n",
+		"product %s, rev %#lux, serial %#lux, made %04d-%02d, oem %s, manufacturer %#ux\n",
 		c->prodname,
 		c->rev,
 		c->serial,
@@ -82,7 +76,7 @@ cidstr(char *p, char *e, Cid *c)
 }
 
 int
-parsecsd(Csd *c, uchar *r)
+parsecsd(Csd *c, uvlong *r)
 {
 	c->version = bits(r, 127, 126);
 	if(c->version != 0 && c->version != 1)
@@ -211,7 +205,7 @@ cardstr(Card *c, char *buf, int n)
 		"size %lld bytes\n"
 		"blocksize %lud\n"
 		"manufactured %d-%02d\n"
-		"rev %#ux\n"
+		"rev %#lux\n"
 		"serial %#lux\n",
 		c->cid.prodname,
 		cardtype(c),
@@ -221,4 +215,22 @@ cardstr(Card *c, char *buf, int n)
 		c->cid.rev,
 		c->cid.serial);
 	return buf;
+}
+
+int
+parsescr(Scr *s, uvlong *r)
+{
+/* xxx */
+	USED(s);
+	USED(r);
+/*
+63-60	scr
+59-56	spec
+55-55	data status after erase
+54-52	security
+51-48	bus width
+47-32	reserved
+31-0	reserved for manufacturer
+*/
+	return -1; /* not yet */
 }
