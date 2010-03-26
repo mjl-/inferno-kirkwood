@@ -2,7 +2,6 @@
  * only memory cards are supported.  only sd cards for now, mmc cards seem obsolete anyway.
  *
  * todo:
- * - lock card/controller when using it.
  * - abort command on error during sleep.
  * - better error handling
  * - hook into devsd.c?
@@ -181,6 +180,7 @@ enum {
 
 static Card card;
 static Rendez dmar;
+static QLock sdl;
 
 enum {
 	Qdir, Qctl, Qinfo, Qdata, Qstatus,
@@ -783,9 +783,16 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 	char *buf, *p, *e;
 	SdioReg *r = SDIOREG;
 
+	qlock(&sdl);
+	if(waserror()) {
+		qunlock(&sdl);
+		nexterror();
+	}
+
 	switch((ulong)c->qid.path){
 	case Qdir:
-		return devdirread(c, a, n, sdiotab, nelem(sdiotab), devgen);
+		n = devdirread(c, a, n, sdiotab, nelem(sdiotab), devgen);
+		break;
 	case Qctl:
 		cardstr(&card, up->genbuf, sizeof (up->genbuf));
 		n = readstr(offset, a, n, up->genbuf);
@@ -830,11 +837,16 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 
 		n = readstr(offset, a, n, buf);
 		free(buf);
+
 		break;
 	default:
 		n = 0;
 		break;
 	}
+
+	qunlock(&sdl);
+	poperror();
+
 	return n;
 }
 
@@ -854,6 +866,12 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 	Cmdbuf *cb;
 	Cmdtab *ct;
 	SdioReg *r = SDIOREG;
+
+	qlock(&sdl);
+	if(waserror()) {
+		qunlock(&sdl);
+		nexterror();
+	}
 
 	switch((ulong)c->qid.path){
 	case Qctl:
@@ -888,6 +906,10 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 	default:
 		error(Ebadusefd);
 	}
+
+	qunlock(&sdl);
+	poperror();
+
 	return n;
 }
 
