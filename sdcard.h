@@ -71,9 +71,7 @@ struct Card {
 	int	sdhc;
 	uint	rca;
 	uvlong	resp[3];
-	int	lastcmd;
-	int	lastisapp;
-	int	lasterr;
+	ulong	status;
 };
 
 int	parsecid(Cid *c, uvlong *r);
