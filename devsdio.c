@@ -2,8 +2,8 @@
  * only memory cards are supported.  only sd cards for now, mmc cards seem obsolete anyway.
  *
  * todo:
+ * - lock card/controller when using it.
  * - abort command on error during sleep.
- * - make sdio() split transaction when it is huge.
  * - better error handling
  * - hook into devsd.c?
  * - use interrupts for all commands?  should be better than polling.
@@ -115,7 +115,7 @@ enum {
 
 	/* est, error status */
 	Ecmdtimeout	= 1<<0,
-	Ecmdcrc	= 1<<1,
+	Ecmdcrc		= 1<<1,
 	Ecmdendbit	= 1<<2,
 	Ecmdindex	= 1<<3,
 	Edatatimeout	= 1<<4,
@@ -143,9 +143,8 @@ enum {
 	CMDWritemulti	= 25,
 
 	ACMDGetscr	= 51,
-};
 
-enum {
+
 	CMD8pattern	= 0xaa,
 	CMD8patternmask	= MASK(8),
 	CMD8voltage	= 1<<8,
@@ -154,9 +153,8 @@ enum {
 	ACMD41voltagewindow	= MASK(23-15+1)<<15,
 	ACMD41sdhcsupported	= 1<<30,
 	ACMD41ready		= 1<<31,
-};
 
-enum {
+
 	ESAcmd12Notexe		= 1<<0,
 	ESAcmd12Timeout		= 1<<1,
 	ESAcmd12CrcErr		= 1<<2,
@@ -164,6 +162,20 @@ enum {
 	ESAcmd12IndexErr	= 1<<4,
 	ESAcmd12RespTBi		= 1<<5,
 	ESAcmd12RespStartBitErr	= 1<<6,
+
+	/* sd status, in R1 & R1b responses */
+	SDappcmd	= 1<<5,		/* next command will be interpreted as app specific */
+	SDreadyfordata	= 1<<8,		/* buffer empty signal on bus */
+	SDstateshift	= 9,
+	SDstatewidth	= 4,
+	SDnoecc		= 1<<14,	/* command executed without ecc */
+	SDerror		= 1<<19,	/* general/unknown error */
+	SDccerror	= 1<<20,	/* internal card controller error */
+	SDbadcmd	= 1<<22,	/* invalid command */
+	SDblocklenerr	= 1<<29,	/* block length invalid */
+
+	/* bits we consider as error.  some indicate conditions we don't (yet) handle. */
+	SDbad		= 1<<3|1<<13|1<<14|1<<15|1<<16|MASK(13)<<19,
 };
 
 
@@ -184,21 +196,21 @@ Dirtab sdiotab[] = {
 
 
 /* for bits in st, est, acmd12st registers */
-static char *statusstrs[] = {
+const static char *statusstrs[] = {
 "cmdcomplete", "xfercomplete", "blockgapevent", "dmaintr",
 "txready", "rxready", "", "",
 "cardintr", "readwaiton", "fifo8wfull", "fifo8wavail",
 "suspended", "autocmd12done", "unexpresp", "errorintr",
 };
 
-static char *errstatusstrs[] = {
+const static char *errstatusstrs[] = {
 "cmdtimeout", "cmdcrc", "cmdendbit", "cmdindex",
 "datatimeout", "rddatacrc", "rddataend", "",
 "autocmd12", "cmdstartbit", "xfersize", "resptbit",
 "crcendbit", "crcstartbit", "crcstatus",
 };
 
-static char *acmd12ststrs[] = {
+const static char *acmd12ststrs[] = {
 "acmd12notexe", "acmd12timeout", "acmd12crcerr", "acmd12endbiterr",
 "acmd12indexerr", "acmd12resptbi", "acmd12respstartbiterr",
 };
@@ -225,12 +237,34 @@ errstatusstr(char *p, char *e, ulong v)
 	return mkstr(p, e, v, errstatusstrs, nelem(errstatusstrs));
 }
 
-
 static char*
 acmd12ststr(char *p, char *e, ulong v)
 {
 	return mkstr(p, e, v, acmd12ststrs, nelem(acmd12ststrs));
 }
+
+static const char *sdstatusstrs[] = {
+"tm0", "tm1", "apprsvd", "akeseqerr",
+"sdiorsvd", "appcmd", "rsvd6", "rsvd7",
+"readyfordata", "st9", "st10", "st11",
+"st12", "erasereset", "noecc", "wperaseskip",
+"csdoverwrite", "rsvd17", "rsvd18", "error",
+"ccerror", "eccfail", "badcmd", "cmdcrcerr",
+"lockerr", "locked", "wpviolation", "eraseparam",
+"eraseseqerr", "blocklenerr", "addrerr", "outofrange",
+};
+static char *
+sdstatusstr(char *p, char *e, ulong v)
+{
+	return mkstr(p, e, v, sdstatusstrs, nelem(sdstatusstrs));
+}
+
+static const char *statestrs[] = {
+"idle", "ready", "ident", "stby",
+"tran", "data", "rcv", "prg",
+"dis", "", "", "",
+"", "", "", "",
+};
 
 static void
 printstatus(char *s, ulong st, ulong est, ulong acmd12st)
@@ -313,6 +347,8 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 		s = sdcmd(c, acmd, card.rca<<16, R1, 0);
 		if(s < 0)
 			return s;
+		if((c->resp[2]>>8 & SDappcmd) == 0)
+			return -1;
 	}
 
 	/* clear status */
@@ -418,6 +454,19 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 		c->resp[1] = 0;
 		c->resp[2] = w;
 		break;
+	}
+
+	if(rt == R1 || rt == R1b) {
+		char buf[128];
+
+		v = c->resp[2]>>8;
+		dprint("status %#lux\n", v);
+		if(v & SDbad)
+			return -1;
+
+		sdstatusstr(buf, buf+sizeof buf, v);
+		v = v>>SDstateshift & MASK(SDstatewidth);
+		dprint("  %s, st %s (%#lux)\n", buf, statestrs[v], v);
 	}
 	return 0;
 }
@@ -565,9 +614,9 @@ sdinit(void)
 	if(sdcmd(&card, 7, card.rca<<16, R1b, 0) < 0)
 		errorsd("selecting card");
 
-if(0){	
+if(0){
 	uchar *p = malloc(512);
-	if(sdcmddma(&card, 55, 1<<0, p, 512, 1, R1, Fappdata|Fdmad2h) < 0)
+	if(sdcmddma(&card, 51, 1<<0, p, 512, 1, R1, Fappdata|Fdmad2h) < 0)
 		errorsd("read scr");
 }
 
@@ -587,7 +636,7 @@ if(0){
 static long
 sdio(uchar *a, long n, vlong offset, int iswrite)
 {
-	ulong cmd, arg, fl;
+	ulong cmd, arg, fl, h, nn;
 
 	if(card.valid == 0)
 		error(Enocard);
@@ -603,12 +652,20 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 
 	cmd = iswrite ? CMDWritemulti : CMDReadmulti;
 	fl = iswrite ? Fdmah2d : Fdmad2h;
-	if(card.sdhc)
-		arg = offset/card.bs;
-	else
-		arg = offset;
-	if(sdcmddma(&card, cmd, arg, a, card.bs, n/card.bs, R1, fl|Fmulti) < 0)
-		errorsd("io");
+
+	h = 0;
+	while(h < n) {
+		if(card.sdhc)
+			arg = (offset+h)/card.bs;
+		else
+			arg = offset+h;
+		nn = n;
+		if(nn > 512*1024)
+			nn = 512*1024;
+		if(sdcmddma(&card, cmd, arg, a+h, card.bs, nn/card.bs, R1, fl|Fmulti) < 0)
+			errorsd("io");
+		h += nn;
+	}
 	return n;
 }
 
@@ -653,15 +710,17 @@ sdioreset(void)
 	SdioReg *r = SDIOREG;
 
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
+	intrdisable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 	r->stirq = 0;
 	r->estirq = 0;
-	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
 static void
 sdioinit(void)
 {
 	SdioReg *r = SDIOREG;
+
+	intrdisable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 
 	card.valid = 0;
 
@@ -685,6 +744,7 @@ sdioinit(void)
 	/* disable all interrupts.  dma interrupt will be enabled as required.  all bits lead to IRQ0sdio. */
 	r->stirq = 0;
 	r->estirq = 0;
+	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
 static Chan*
