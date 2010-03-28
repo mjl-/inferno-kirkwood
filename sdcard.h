@@ -14,31 +14,40 @@ struct Cid
 	int	mon;
 };
 
-/* xxx make shorter but still readable names */
 struct Csd
 {
-	int	version;
-	int	taac, nsac;
-	int	xferspeed;
-	int	cmdclasses;
-	int	readblocklength, readblockpartial;
-	int	writeblockmisalign, readblockmisalign;
-	int	dsr;
-	int	size;
+	uchar	vers;		/* version */
+	uchar	taac;		/* data read access time */
+	uchar	nsac;		/* idem */
+	uchar	speed;		/* transfer speed */
+	ushort	ccc;		/* card command classes */
+	uchar	rbl;		/* read block length, log 2 */
+	uchar	rbpart;		/* partial block reads allowed */
+	uchar	wbmalign;	/* writes on misaligned blocks allowed */
+	uchar	rbmalign;	/* idem for reads */
+	uchar	dsr;		/* whether dsr is implemented */
+	uint	size;		/* for calculating size */
 	union {
 		struct {
-			int	vddrmin, vddrmax, vddwmin, vddwmax;
-			int	sizemult;
+			uchar	vddrmin;
+			uchar	vddrmax;
+			uchar	vddwmin;
+			uchar	vddwmax;
+			uchar	sizemult;	/* available bytes:  (size+1)*2**(sizemult+2) */
 		} v0;
 	};
-	int	eraseblockenable, erasesectorsize;
-	int	wpgroupsize, wpgroupenable;
-	int	writespeedfactor;
-	int	writeblocklength, writeblockpartial;
-	int	fileformatgroup;
-	int	copy;
-	int	permwriteprotect, tmpwriteprotect;
-	int	fileformat;
+	uchar	eraseblk;	/* if areas smaller than sector can be erased */
+	uchar	erasesecsz;	/* (erasesecsz+1) is number of wbl blocks that are erased, for eraseblk */
+	uchar	wpgrpsize;	/* write protected group size */
+	uchar	wpgrp;		/* idem, enabled */
+	uchar	speedfactor;	/* read/write speed factor */
+	uchar	wbl;		/* write block length, log 2 */
+	uchar	wbpart;		/* partial block writes allowed */
+	uchar	ffgrp;		/* file format group */
+	uchar	copy;		/* is this a copy? */
+	uchar	permwp;		/* permanently write protected */
+	uchar	tmpwp;		/* temporarily write protected */
+	uchar	ff;		/* file format */
 };
 
 enum {

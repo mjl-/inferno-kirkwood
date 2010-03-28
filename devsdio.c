@@ -587,16 +587,16 @@ sdinit(void)
 	if(parsecsd(&card.csd, card.resp) < 0)
 		error("bad csd register");
 
-	if(card.csd.version == 0) {
-		card.bs = 1<<card.csd.readblocklength;
+	if(card.csd.vers == 0) {
+		card.bs = 1<<card.csd.rbl;
 		card.size = card.csd.size+1;
 		card.size *= 1<<(card.csd.v0.sizemult+2);
-		card.size *= 1<<card.csd.readblocklength;
+		card.size *= 1<<card.csd.rbl;
 		print("csd0, block length read/write %d/%d, size %lld bytes, eraseblock %d\n",
-			1<<card.csd.readblocklength, 
-			1<<card.csd.writeblocklength,
+			1<<card.csd.rbl, 
+			1<<card.csd.wbl,
 			card.size,
-			(1<<card.csd.writeblocklength)*(card.csd.erasesectorsize+1));
+			(1<<card.csd.wbl)*(card.csd.erasesecsz+1));
 	} else {
 		card.bs = 512;
 		card.size = (vlong)(card.csd.size+1)*card.bs*1024;
@@ -628,6 +628,12 @@ sdinit(void)
 	sdiotab[Qdata].length = card.size;
 	card.valid = 1;
 	print("%s", cardstr(&card, up->genbuf, sizeof (up->genbuf)));
+}
+
+static int
+sdstatus(uchar *p)
+{
+	return sdcmddma(&card, 13, 0, p, 64, 1, R1, Fapp|Fdmad2h);
 }
 
 static int

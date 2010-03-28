@@ -79,20 +79,20 @@ cidstr(char *p, char *e, Cid *c)
 int
 parsecsd(Csd *c, uvlong *r)
 {
-	c->version = bits(r, 127, 126);
-	if(c->version != 0 && c->version != 1)
+	c->vers = bits(r, 127, 126);
+	if(c->vers != 0 && c->vers != 1)
 		return -1;
 
 	c->taac			= bits(r, 119, 112);
 	c->nsac			= bits(r, 111, 104);
-	c->xferspeed		= bits(r, 103, 96);
-	c->cmdclasses		= bits(r, 95, 84);
-	c->readblocklength	= bits(r, 83, 80);
-	c->readblockpartial	= bits(r, 79, 79);
-	c->writeblockmisalign	= bits(r, 78, 78);
-	c->readblockmisalign	= bits(r, 77, 77);
+	c->speed		= bits(r, 103, 96);
+	c->ccc			= bits(r, 95, 84);
+	c->rbl			= bits(r, 83, 80);
+	c->rbpart		= bits(r, 79, 79);
+	c->wbmalign		= bits(r, 78, 78);
+	c->rbmalign		= bits(r, 77, 77);
 	c->dsr			= bits(r, 76, 76);
-	if(c->version == 0) {
+	if(c->vers == 0) {
 		c->size		= bits(r, 75, 62);
 		c->v0.vddrmin	= bits(r, 61, 59);
 		c->v0.vddrmax	= bits(r, 58, 56);
@@ -102,18 +102,18 @@ parsecsd(Csd *c, uvlong *r)
 	} else {
 		c->size		= bits(r, 69, 48);
 	}
-	c->eraseblockenable	= bits(r, 46, 46);
-	c->erasesectorsize	= bits(r, 45, 39);
-	c->wpgroupsize		= bits(r, 38, 32);
-	c->wpgroupenable	= bits(r, 31, 31);
-	c->writespeedfactor	= bits(r, 28, 26);
-	c->writeblocklength	= bits(r, 25, 22);
-	c->writeblockpartial	= bits(r, 21, 21);
-	c->fileformatgroup	= bits(r, 15, 15);
+	c->eraseblk		= bits(r, 46, 46);
+	c->erasesecsz		= bits(r, 45, 39);
+	c->wpgrpsize		= bits(r, 38, 32);
+	c->wpgrp		= bits(r, 31, 31);
+	c->speedfactor		= bits(r, 28, 26);
+	c->wbl			= bits(r, 25, 22);
+	c->wbpart		= bits(r, 21, 21);
+	c->ffgrp		= bits(r, 15, 15);
 	c->copy			= bits(r, 14, 14);
-	c->permwriteprotect	= bits(r, 13, 13);
-	c->tmpwriteprotect	= bits(r, 12, 12);
-	c->fileformat		= bits(r, 11, 10);
+	c->permwp		= bits(r, 13, 13);
+	c->tmpwp		= bits(r, 12, 12);
+	c->ff			= bits(r, 11, 10);
 
 	return 0;
 }
@@ -124,7 +124,7 @@ csdstr(char *p, char *e, Csd *c)
 	char versbuf[128];
 
 	versbuf[0] = '\0';
-	if(c->version == 0)
+	if(c->vers == 0)
 		snprint(versbuf, sizeof versbuf,
 			"vddrmin %x\n"
 			"vddrmax %x\n"
@@ -137,54 +137,54 @@ csdstr(char *p, char *e, Csd *c)
 			c->v0.vddwmax,
 			c->v0.sizemult);
 	return seprint(p, e,
-		"version %x\n"
-		"taac %x\n"
-		"nsac %x\n"
-		"xferspeed %x\n"
-		"cmdclasses %x\n"
-		"readblocklength %x\n"
-		"readblockpartial %x\n"
-		"writeblockmisalign %x\n"
-		"readblockmisalign %x\n"
-		"dsr %x\n"
-		"devsize %x\n"
+		"version %ux\n"
+		"taac %ux\n"
+		"nsac %ux\n"
+		"transferspeed %ux\n"
+		"card command classes %ux\n"
+		"readblocklength %ux\n"
+		"readblockpartial %ux\n"
+		"writeblockmisalign %ux\n"
+		"readblockmisalign %ux\n"
+		"dsr %ux\n"
+		"devsize %ux\n"
 		"%s"
-		"eraseblockenable %x\n"
-		"erasesectorsize %x\n"
-		"wpgroupsize %x\n"
-		"wpgroupenable %x\n"
-		"writespeedfactor %x\n"
-		"writeblocklength %x\n"
-		"writeblockpartial %x\n"
-		"fileformatgroup %x\n"
-		"copy %x\n"
-		"permwriteprotect %x\n"
-		"tmpwriteprotect %x\n"
-		"fileformat %x\n",
-		c->version,
-		c->taac,
-		c->nsac,
-		c->xferspeed,
-		c->cmdclasses,
-		c->readblocklength,
-		c->readblockpartial,
-		c->writeblockmisalign,
-		c->readblockmisalign,
-		c->dsr,
-		c->size,
+		"eraseblockenable %ux\n"
+		"erasesectorsize %ux\n"
+		"wpgroupsize %ux\n"
+		"wpgroupenable %ux\n"
+		"writespeedfactor %ux\n"
+		"writeblocklength %ux\n"
+		"writeblockpartial %ux\n"
+		"fileformatgroup %ux\n"
+		"copy %ux\n"
+		"permwriteprotect %ux\n"
+		"tmpwriteprotect %ux\n"
+		"fileformat %ux\n",
+		(uint)c->vers,
+		(uint)c->taac,
+		(uint)c->nsac,
+		(uint)c->speed,
+		(uint)c->ccc,
+		(uint)c->rbl,
+		(uint)c->rbpart,
+		(uint)c->wbmalign,
+		(uint)c->rbmalign,
+		(uint)c->dsr,
+		(uint)c->size,
 		versbuf,
-		c->eraseblockenable,
-		c->erasesectorsize,
-		c->wpgroupsize,
-		c->wpgroupenable,
-		c->writespeedfactor,
-		c->writeblocklength,
-		c->writeblockpartial,
-		c->fileformatgroup,
-		c->copy,
-		c->permwriteprotect,
-		c->tmpwriteprotect,
-		c->fileformat);
+		(uint)c->eraseblk,
+		(uint)c->erasesecsz,
+		(uint)c->wpgrpsize,
+		(uint)c->wpgrp,
+		(uint)c->speedfactor,
+		(uint)c->wbl,
+		(uint)c->wbpart,
+		(uint)c->ffgrp,
+		(uint)c->copy,
+		(uint)c->permwp,
+		(uint)c->tmpwp,
+		(uint)c->ff);
 }
 
 char*
