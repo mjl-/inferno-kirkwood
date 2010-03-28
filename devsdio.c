@@ -2,7 +2,6 @@
  * only memory cards are supported (not sdio).  only sd cards for now, mmc cards seem obsolete anyway.
  *
  * todo:
- * - interrupts are sometimes lost?
  * - don't crash when proc doing read/write is killed.
  * - hook into devsd.c?
  * - wait reading dat[0] in hoststate for r1b responses?
@@ -21,7 +20,7 @@
 #include	"io.h"
 #include	"sdcard.h"
 
-#define DEBUG 1
+#define DEBUG 0
 #define dprint	if(DEBUG)print
 
 char Enocard[] = "no card";
@@ -311,11 +310,12 @@ errorsd(char *s, int v)
 }
 
 static int
-isdone(void *)
+sdiodone(void *p)
 {
 	SdioReg *r = SDIOREG;
+	ulong v = *(ulong *)p;
 
-	if(r->st & r->stirq) {
+	if(r->st & v) {
 		r->stirq = 0;
 		return 1;
 	}
@@ -333,7 +333,7 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 	int i, s;
 	ulong acmd;
 	ulong cmdopts, mode;
-	ulong need;
+	ulong need, v;
 	uvlong w;
 
 	print("sdcmd, cmd %lud, arg %lud, fl %#lux\n", cmd, arg, fl);
@@ -344,7 +344,7 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 			break;
 		if(i++ >= 50)
 			return SDCardbusy;
-		tsleep(&up->sleep, return0, nil, 10);
+		tsleep(&up->sleep, return0, nil, i);
 	}
 
 	if(fl & (Fapp|Fappdata)) {
@@ -364,9 +364,6 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 	r->acmd12st = ~0;
 	// xxx remove?
 	printstatus("before cmd: ", r->st, r->est, r->acmd12st);
-
-	// xxx?
-	microdelay(1000);
 
 	/* prepare args & execute command */
 	r->arglo = arg>>0 & MASK(16);
@@ -401,13 +398,15 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 		need = Sdmaintr;
 	r->stirq = need|Sunexpresp|Serror;
 	r->estirq = ~0;
+
 	while(waserror())
 		s = SDInterrupted;
-	tsleep(&cmdr, isdone, nil, 5000);
+	v = r->stirq;
+	tsleep(&cmdr, sdiodone, &v, 5000);
 	poperror();
-
 	if(s == SDInterrupted)
 		return s;
+
 	if(r->st & (Sunexpresp|Serror)) {
 		card.status = r->est;
 		return SDError;
