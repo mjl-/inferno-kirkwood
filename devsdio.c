@@ -5,6 +5,8 @@
  * - interrupts are sometimes lost?
  * - don't crash when proc doing read/write is killed.
  * - hook into devsd.c?
+ * - wait reading dat[0] in hoststate for r1b responses?
+ * - read scr register and use it to determine if card supports 4bit data bus
  * - see if we can detect device inserts/ejects?  yes, by sd_cd gpio pin (on mpp47).
  * - ctl commands for erasing?
  * - erase before writing big buffer?
@@ -74,6 +76,7 @@ enum {
 	/* hoststate */
 	HScmdinhibit	= 1<<0,
 	HScardbusy	= 1<<1,
+	HSdatshift	= 3,
 	HStxactive	= 1<<8,
 	HSrxactive	= 1<<9,
 	HSfifofull	= 1<<12,
@@ -405,10 +408,12 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 
 	if(s == SDInterrupted)
 		return s;
-	if(r->st & (Sunexpresp|Serror) || (r->st & need) == 0) {
+	if(r->st & (Sunexpresp|Serror)) {
 		card.status = r->est;
 		return SDError;
 	}
+	if((r->st & need) == 0)
+		return SDTimeout;
 
 	printstatus("success", r->st, r->est, r->acmd12st);
 
@@ -463,11 +468,11 @@ sdcmddma(Card *c, ulong cmd, ulong arg, void *a, int blsz, int nbl, int resp, ul
 
 	dcwbinv(a, blsz*nbl);
 	r->dmaaddrlo = (ulong)a & MASK(16);
-	r->dmaaddrhi = ((ulong)a>>16) & MASK(16);
+	r->dmaaddrhi = (ulong)a>>16 & MASK(16);
 	r->blksize = blsz;
 	r->blkcount = nbl;
 	dprint("sdcmddma, a %#lux, dmaddrlo %#lux dmaadrhi %#lux blksize %d blkcount %d cmdarg %#lux\n",
-		a, (ulong)a & MASK(16), ((ulong)a>>16) & MASK(16), blsz, nbl, arg);
+		a, (ulong)a & MASK(16), (ulong)a>>16 & MASK(16), blsz, nbl, arg);
 	return sdcmd(c, cmd, arg, resp, fl);
 }
 
@@ -475,6 +480,7 @@ static void
 sdclock(ulong v)
 {
 	SDIOREG->clockdiv = ((100*1000*1000)/v)-1;
+	delay(1);
 }
 
 static void
@@ -566,8 +572,8 @@ sdinit(void)
 		s = sdcmd(&card, 3, 0, R6, 0);
 		if(s < 0)
 			errorsd("getting relative address", s);
-		card.rca = (card.resp[2]>>24) & MASK(16);
-		v = (card.resp[2]>>8) & MASK(16);
+		card.rca = card.resp[2]>>24 & MASK(16);
+		v = card.resp[2]>>8 & MASK(16);
 		dprint("have card rca %ux, status %lux\n", card.rca, v);
 		USED(v);
 		if(card.rca != 0)
@@ -611,26 +617,7 @@ sdinit(void)
 	if(s < 0)
 		errorsd("selecting card", s);
 
-if(0){
-	uchar *p = malloc(64);
-	Scr scr;
-
-	s = sdcmd(&card, 16, 64, R1, 0);
-	if(s < 0)
-		errorsd("setting 64 byte blocksize", s);
-
-	s = sdcmddma(&card, 51, 1<<0, p, 64, 1, R1, Fapp|Fdmad2h);
-	if(s < 0)
-		errorsd("read scr", s);
-
-	if(parsescr(&scr, card.resp) < 0)
-		error("bad scr register");
-
-	print("scr: vers %ud, spec %ud, dataerased %ud, sec %ud, buswidth %ud\n",
-		(uint)scr.vers, (uint)scr.spec, (uint)scr.dataerased, (uint)scr.sec, (uint)scr.buswidth);
-}
-
-	/* xxx have to check if this is supported by card.  in scr register */
+	/* xxx have to check with scr register if 4bit buswidth is supported by card.  have not been able to read it though... */
 	s = sdcmd(&card, 6, 1<<1, R1, Fapp);
 	if(s < 0)
 		errorsd("setting buswidth to 4-bit", s);
@@ -644,6 +631,27 @@ if(0){
 	print("%s", cardstr(&card, up->genbuf, sizeof (up->genbuf)));
 }
 
+static int
+erase(vlong offset, long n)
+{
+	vlong e;
+	int s;
+
+	e = offset+n;
+	if(card.sdhc) {
+		e -= 512;
+		offset /= 512;
+		e /= 512;
+	} else
+		e -= 1;
+
+	s = sdcmd(&card, 32, offset, R1, 0);	/* first addr to erase */
+	if(s >= 0)
+		s = sdcmd(&card, 33, e, R1, 0);	/* last addr to erase (inclusive) */
+	if(s >= 0)
+		s = sdcmd(&card, 38, 0, R1b, 0);	/* start erasing */
+	return s;
+}
 
 static long
 sdio(uchar *a, long n, vlong offset, int iswrite)
@@ -679,6 +687,11 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 		nn = n;
 		if(nn > 512*1024)
 			nn = 512*1024;
+		if(iswrite) {
+			s = sdcmd(&card, 23, nn/512, R1, Fapp);
+			if(s < 0)
+				errorsd("erase before write", s);
+		}
 		s = sdcmddma(&card, cmd, arg, a+h, 512, nn/512, R1, fl|Fmulti);
 		if(s < 0)
 			errorsd("io", s);
@@ -857,13 +870,14 @@ sdioread(Chan* c, void* a, long n, vlong offset)
 }
 
 enum {
-	CMreset, CMinit, CMclean,
+	CMreset, CMinit, CMclean, CMerase,
 };
 static Cmdtab sdioctl[] = 
 {
 	CMreset,	"reset",	1,
 	CMinit,		"init",		1,
 	CMclean,	"clean",	1,
+	CMerase,	"erase",	3,
 };
 
 static long
@@ -872,6 +886,9 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 	Cmdbuf *cb;
 	Cmdtab *ct;
 	SdioReg *r = SDIOREG;
+	vlong eoff;
+	long en;
+	int s;
 
 	qlock(&sdl);
 	if(waserror()) {
@@ -901,6 +918,13 @@ sdiowrite(Chan* c, void* a, long n, vlong offset)
 			r->st = ~0;
 			r->est = ~0;
 			r->acmd12st = ~0;
+			break;
+		case CMerase:
+			eoff = strtoll(cb->f[1], nil, 0);
+			en = strtol(cb->f[2], nil, 0);
+			s = erase(eoff, en);
+			if(s < 0)
+				errorsd("erase", s);
 			break;
 		}
 		poperror();
