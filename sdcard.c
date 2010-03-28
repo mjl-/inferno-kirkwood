@@ -16,8 +16,9 @@ min(int a, int b)
 	return b;
 }
 
+/* return bits h(igh) to l(ow) (inclusive) from big endian r[3] */
 static ulong
-bits(uvlong *r, int h, int l)
+bits(uvlong r[3], int h, int l)
 {
 	uvlong v;
 	int o;
@@ -220,17 +221,11 @@ cardstr(Card *c, char *buf, int n)
 int
 parsescr(Scr *s, uvlong *r)
 {
-/* xxx */
-	USED(s);
-	USED(r);
-/*
-63-60	scr
-59-56	spec
-55-55	data status after erase
-54-52	security
-51-48	bus width
-47-32	reserved
-31-0	reserved for manufacturer
-*/
-	return -1; /* not yet */
+	s->vers		= bits(r, 63, 60);
+	s->spec		= bits(r, 59, 56);
+	s->dataerased	= bits(r, 55, 55);
+	s->sec		= bits(r, 54, 52);
+	s->buswidth	= bits(r, 51, 48);
+
+	return 0;
 }

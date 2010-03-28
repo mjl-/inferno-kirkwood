@@ -405,7 +405,7 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 
 	if(s == SDInterrupted)
 		return s;
-	if((r->st & need) == 0) {
+	if(r->st & (Sunexpresp|Serror) || (r->st & need) == 0) {
 		card.status = r->est;
 		return SDError;
 	}
@@ -600,10 +600,22 @@ sdinit(void)
 		errorsd("selecting card", s);
 
 if(0){
-	uchar *p = malloc(512);
-	s = sdcmddma(&card, 51, 1<<0, p, 512, 1, R1, Fappdata|Fdmad2h);
+	uchar *p = malloc(64);
+	Scr scr;
+
+	s = sdcmd(&card, 16, 64, R1, 0);
+	if(s < 0)
+		errorsd("setting 64 byte blocksize", s);
+
+	s = sdcmddma(&card, 51, 1<<0, p, 64, 1, R1, Fapp|Fdmad2h);
 	if(s < 0)
 		errorsd("read scr", s);
+
+	if(parsescr(&scr, card.resp) < 0)
+		error("bad scr register");
+
+	print("scr: vers %ud, spec %ud, dataerased %ud, sec %ud, buswidth %ud\n",
+		(uint)scr.vers, (uint)scr.spec, (uint)scr.dataerased, (uint)scr.sec, (uint)scr.buswidth);
 }
 
 	/* xxx have to check if this is supported by card.  in scr register */
