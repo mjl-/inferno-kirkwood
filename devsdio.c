@@ -333,7 +333,7 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 	ulong need;
 	uvlong w;
 
-	print("sdcmd, cmd %ld, arg %ld, fl %#lux\n", cmd, arg, fl);
+	print("sdcmd, cmd %lud, arg %lud, fl %#lux\n", cmd, arg, fl);
 
 	i = 0;
 	for(;;) {
@@ -611,9 +611,9 @@ if(0){
 	if(s < 0)
 		errorsd("setting buswidth to 4-bit", s);
 
-	s = sdcmd(&card, 16, card.bs, R1, 0);
+	s = sdcmd(&card, 16, 512, R1, 0);
 	if(s < 0)
-		errorsd("setting block length", s);
+		errorsd("setting 512 byte blocksize", s);
 
 	sdiotab[Qdata].length = card.size;
 	card.valid = 1;
@@ -634,9 +634,9 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	if((ulong)a % 4 != 0)
 		error("bad buffer alignment...");
 
-	if(offset % card.bs != 0)
+	if(offset & (512-1))
 		error("not sector aligned");
-	if(n % card.bs != 0)
+	if(n & (512-1))
 		error("not multiple of sector size");
 
 	cmd = CMDReadmulti;
@@ -649,13 +649,13 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 	h = 0;
 	for(;;) {
 		if(card.sdhc)
-			arg = (offset+h)/card.bs;
+			arg = (offset+h)/512;
 		else
 			arg = offset+h;
 		nn = n;
 		if(nn > 512*1024)
 			nn = 512*1024;
-		s = sdcmddma(&card, cmd, arg, a+h, card.bs, nn/card.bs, R1, fl|Fmulti);
+		s = sdcmddma(&card, cmd, arg, a+h, 512, nn/512, R1, fl|Fmulti);
 		if(s < 0)
 			errorsd("io", s);
 		h += nn;
