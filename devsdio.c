@@ -2,9 +2,9 @@
  * only memory cards are supported (not sdio).  only sd cards for now, mmc cards seem obsolete anyway.
  *
  * todo:
+ * - interrupts are sometimes lost?
  * - don't crash when proc doing read/write is killed.
  * - hook into devsd.c?
- * - test with non-high capacity sd cards.  i think it does need different code.
  * - see if we can detect device inserts/ejects?  yes, by sd_cd gpio pin (on mpp47).
  * - ctl commands for erasing?
  * - erase before writing big buffer?
@@ -501,16 +501,26 @@ sdinit(void)
 	card.sdhc = 0;
 	card.rca = 0;
 	s = sdcmd(&card, 8, CMD8voltage|CMD8pattern, R7, 0);
-	if(s == SDOk) {
+	switch(s) {
+	case SDOk:
 		card.sd2 = 1;
 		v = card.resp[2]>>8;
 		if((v & CMD8patternmask) != CMD8pattern)
 			error("check pattern mismatch");
-		if((v & CMD8voltagemask) != CMD8voltage) {
+		if((v & CMD8voltagemask) != CMD8voltage)
 			error("voltage not supported");
-		}
-	} else if(s != SDTimeout)
-		error("voltage exchange failed");
+		break;
+
+	case SDTimeout:
+	case SDError:	/* "no response" from spec can result in error too apparently */
+		/* sd 1.x or not an sd memory card */
+		s = sdcmd(&card, 0, 0, R0, 0);
+		if(s < 0)
+			errorsd("reset failed", s);
+		break;
+	default:
+		errorsd("voltage exchange failed", s);
+	}
 
 	/*
 	 * "send host capacity support information".
@@ -520,7 +530,9 @@ sdinit(void)
 	 */
 	i = 0;
 	for(;;) {
-		v = ACMD41sdhcsupported|ACMD41voltagewindow;
+		v = ACMD41voltagewindow;
+		if(card.sd2)
+			v |= ACMD41sdhcsupported;
 		s = sdcmd(&card, 41, v, R3, Fapp);
 		if(s < 0) {
 			if(s == SDTimeout && !card.sd2)
@@ -535,9 +547,9 @@ sdinit(void)
 			break;
 		}
 
-		if(i >= 100)
+		if(i++ >= 100)
 			error("sd card failed to power up");
-		tsleep(&up->sleep, return0, nil, 5);
+		tsleep(&up->sleep, return0, nil, 10);
 	}
 	dprint("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", card.mmc, card.sd2, card.sdhc);
 	if(card.mmc)
