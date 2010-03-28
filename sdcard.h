@@ -71,7 +71,7 @@ struct Card {
 	int	sdhc;
 	uint	rca;
 	uvlong	resp[3];
-	ulong	status;
+	ulong	status;			/* r1 card status, for SDBadstatus;  SDIOREG->est for SDError */
 };
 
 int	parsecid(Cid *c, uvlong *r);
