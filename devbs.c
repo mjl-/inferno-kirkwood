@@ -3,7 +3,7 @@
  *
  * todo:
  * - locking
- * - understand plan 9 partition table
+ * - understand extended partitions
  * - hotplug & events, make event-file per Qdiskpart too.
  * - think about returning a type of device, eg "ata", "sdcard"
  * - think about raw command access.
