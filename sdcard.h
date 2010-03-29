@@ -88,5 +88,5 @@ char*	cidstr(char *p, char *e, Cid *c);
 int	parsecsd(Csd *c, uvlong *r);
 char*	csdstr(char *p, char *e, Csd *c);
 char*	cardtype(Card *c);
-char*	cardstr(Card *c, char *buf, int n);
+char*	cardstr(char *p, char *e, Card *c);
 int	parsescr(Scr *s, uvlong *r);

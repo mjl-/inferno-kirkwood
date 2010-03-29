@@ -618,7 +618,9 @@ sdinit(void)
 		errorsd("setting 512 byte blocksize", s);
 
 	card.valid = 1;
-	print("%s", cardstr(&card, up->genbuf, sizeof (up->genbuf)));
+
+	cardstr(up->genbuf, up->genbuf+sizeof (up->genbuf), &card);
+	print("%s", up->genbuf);
 }
 
 static int
@@ -772,25 +774,6 @@ sdioinit(Store *)
 }
 
 /*
-	case Qctl:
-		cardstr(&card, up->genbuf, sizeof (up->genbuf));
-		n = readstr(offset, a, n, up->genbuf);
-		break;
-*/
-/*
-	case Qinfo:
-		if(card.valid == 0)
-			error(Enocard);
-		p = buf = smalloc(READSTR);
-		e = p+READSTR;
-		p = cidstr(p, e, &card.cid);
-		p = csdstr(p, e, &card.csd);
-		USED(p);
-		n = readstr(offset, a, n, buf);
-		free(buf);
-		break;
-*/
-/*
 	case Qstatus:
 		p = buf = smalloc(READSTR);
 		e = p+READSTR;
@@ -820,11 +803,43 @@ sdioinit(Store *)
 */
 
 static long
-sdiorctl(Store *d, void *s, long n, vlong off)
+sdiorctl(Store *d, void *a, long n, vlong off)
 {
-	USED(d, s, n, off);
-	print("sdiorctl\n");
-	return -1;
+	char *buf;
+	char *p, *e;
+
+	USED(d);
+
+	qlock(&sdl);
+	if(waserror()) {
+		qunlock(&sdl);
+		nexterror();
+	}
+
+	if(card.valid == 0)
+		error(Enocard);
+
+	buf = smalloc(READSTR);
+	if(waserror()) {
+		free(buf);
+		nexterror();
+	}
+
+	p = buf;
+	e = buf+READSTR;
+	p = cardstr(p, e, &card);
+	p = cidstr(p, e, &card.cid);
+	p = csdstr(p, e, &card.csd);
+	USED(p);
+	n = readstr(off, a, n, buf);
+
+	poperror();
+	free(buf);
+
+	poperror();
+	qunlock(&sdl);
+
+	return n;
 }
 
 static long

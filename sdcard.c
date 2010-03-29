@@ -198,9 +198,9 @@ cardtype(Card *c)
 }
 
 char*
-cardstr(Card *c, char *buf, int n)
+cardstr(char *p, char *e, Card *c)
 {
-	snprint(buf, n,
+	return seprint(p, e,
 		"card %s\n"
 		"type %s\n"
 		"size %lld bytes\n"
@@ -215,7 +215,6 @@ cardstr(Card *c, char *buf, int n)
 		c->cid.year, c->cid.mon,
 		c->cid.rev,
 		c->cid.serial);
-	return buf;
 }
 
 int
