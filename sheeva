@@ -18,10 +18,11 @@ dev
 	boot
 	flash
 	ftl
-	sdio	sdcard
+#	sdio	sdcard
 	sheeva
 	efuse
 	sata
+	bs	part
 
 ip
 	il
@@ -38,6 +39,7 @@ link
 #	cesa
 #	flashnand	nand
 	kwnand
+	kwsdio	sdcard
 
 lib
 	interp

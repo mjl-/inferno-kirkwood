@@ -39,6 +39,8 @@ HFILES=\
 	dat.h\
 	fns.h\
 	io.h\
+	part.h\
+	bs.h\
 
 CFLAGS=-wFV -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp
 KERNDATE=`{$NDATE}

@@ -2,7 +2,7 @@
 load std
 autoload=(std)
 
-bind -a '#o' /dev	# sdio
+bind -a '#n' /dev	# bs
 bind -a '#φ' /dev	# efuse
 bind -a '#T' /dev	# sheeva
 bind -a '#B' /dev	# boot
@@ -19,9 +19,6 @@ memfs /tmp
 #echo dynamic | run /netrc
 
 echo watchdog off > /dev/sheevactl
-echo debug off > /dev/sdioctl
-#echo init > /dev/sdioctl
-#cat /dev/sdioctl
 
 #echo dossrv
 #dossrv  -f /dev/sdio -m /n/dos

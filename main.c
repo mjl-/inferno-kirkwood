@@ -294,7 +294,6 @@ main(void)
 	iprint("kbdinit\n");
 	kbdinit();
 
-	iprint("prints\n");
 	print("%ld MHz, id %08lux\n", (m->cpuhz+500000)/1000000, cpuidget());
 	print("\nInferno %s\n", VERSION);
 	print("Vita Nuova\n");
