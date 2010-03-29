@@ -13,9 +13,9 @@ struct Store
 
 	void	(*init)(Store *d);		/* init controller */
 	void	(*diskinit)(Store *d);		/* find disk and set size */
-	int	(*rctl)(Store *d, char *s);
-	int	(*wctl)(Store *d, char *s);
+	long	(*rctl)(Store *d, void *s, long n, vlong off);
+	long	(*wctl)(Store *d, void *s, long n);
 	long	(*io)(void *d, int iswrite, void *buf, long n, vlong off);
 };
 
-extern void blockdiskadd(Store *);
+extern void blockstoreadd(Store *);

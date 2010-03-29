@@ -13,15 +13,16 @@ g32(uchar *p)
 }
 
 int
-partinit(long (*r)(void *, int, void *, long, vlong), void *disk, Part **partsp)
+partinit(long (*r)(void *, int, void *, long, vlong), void *disk, vlong size, Part **partsp)
 {
 	uchar buf[512+63];
 	uchar *p = (void*)(((ulong)buf+63)&~63);
 	long n;
-	int i, o;
+	int i, j, o;
 	Part part;
 	int nparts = 1;
 	Part *parts = *partsp;
+	vlong js, je;
 
 	n = r(disk, 0, p, 512, 0);
 	if(n != 512)
@@ -42,6 +43,18 @@ partinit(long (*r)(void *, int, void *, long, vlong), void *disk, Part **partsp)
 		part.e = part.s+part.size;
 		strcpy(part.uid, eve);
 		part.perm = 0660;
+		part.isopen = 0;
+
+		if(part.e > size)
+			error("partition beyond end of disk");
+		/* do not allow overlapping partitions, note that first Part is whole disk */
+		for(j = 1; j < nparts; j++) {
+			js = parts[j].s;
+			je = parts[j].e;
+			if(js >= part.s && js < part.e || je > part.s && je <= part.e)
+				error("overlapping partitions");
+		}
+
 		print("part, index %d, typ 0x%ux, name %s, s %lld, e %lld, size %lld\n",
 			(int)part.index, (uint)part.typ, part.name, part.s, part.e, part.size);
 		parts = realloc(parts, sizeof parts[0]*(nparts+1));

@@ -258,6 +258,7 @@ printstatus(char *s, ulong st, ulong est, ulong acmd12st)
 {
 	char *p, *e;
 
+	USED(s);
 	if(!DEBUG)
 		return;
 
@@ -739,7 +740,7 @@ sdioreset(void)
 }
 
 static void
-sdioinit(Store *d)
+sdioinit(Store *)
 {
 	SdioReg *r = SDIOREG;
 
@@ -818,18 +819,18 @@ sdioinit(Store *d)
 		free(buf);
 */
 
-static int
-sdiorctl(Store *d, char *s)
+static long
+sdiorctl(Store *d, void *s, long n, vlong off)
 {
-	USED(d, s);
+	USED(d, s, n, off);
 	print("sdiorctl\n");
 	return -1;
 }
 
-static int
-sdiowctl(Store *d, char *s)
+static long
+sdiowctl(Store *d, void *s, long n)
 {
-	USED(d, s);
+	USED(d, s, n);
 	print("sdiowctl\n");
 	return -1;
 }
@@ -850,11 +851,11 @@ sdiodiskinit(Store *d)
 
 
 static Store sdiodisk = {
-	.init		= sdioinit,
-	.diskinit	= sdiodiskinit,
-	.rctl		= sdiorctl,
-	.wctl		= sdiowctl,
-	.io		= sdioio,
+.init		= sdioinit,
+.diskinit	= sdiodiskinit,
+.rctl		= sdiorctl,
+.wctl		= sdiowctl,
+.io		= sdioio,
 };
 
 void
@@ -863,5 +864,5 @@ kwsdiolink(void)
 	print("kwsdiolink\n");
 	sdioreset();
 	sdiodisk.num = 2;
-	blockdiskadd(&sdiodisk);
+	blockstoreadd(&sdiodisk);
 }

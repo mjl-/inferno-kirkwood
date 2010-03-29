@@ -11,6 +11,7 @@ struct Part
 
 	char	uid[KNAMELEN];
 	ulong	perm;
+	int	isopen;		/* only for non-data Part */
 };
 
-int partinit(long (*read)(void *disk, int iswrite, void *buf, long n, vlong off), void *disk, Part **parts);
+int partinit(long (*read)(void *disk, int iswrite, void *buf, long n, vlong off), void *disk, vlong size, Part **parts);
