@@ -7,13 +7,13 @@ nand flash pages.
 next steps:
 - find & fix crash with latest uboot
 - l2 cache, does not seem to speed up much.  something wrong?
-- better sdio (error handling, interrupts, sd hooks, proper timeouts, mmc, use user buffer without crashing, better sdhc, and much more)
 - better nand support
 - delay/microdelay calibration
 - better sata support
 - perform register file read after register writes to different registers
 - lower power.  make sure we don't go into sdram self-refresh when we were just doing something useful.
 - more ethernet (fewer interrupts, more checks for idleness when configuring, phy)
+- better sdio
 - improve uart (mode setting)
 - unbreak cesa.c, use it again
 - more gpio, devgpio.c

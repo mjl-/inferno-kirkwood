@@ -3,13 +3,10 @@
  *
  * todo:
  * - don't crash when proc doing read/write is killed.
- * - hook into devsd.c?
  * - look at effects of csd.eraseblk and csd.erasesecsize on erase() and possibly pre-write-erase.
  * - wait reading dat[0] in hoststate for r1b responses?
  * - read scr register and use it to determine if card supports 4bit data bus
  * - see if we can detect device inserts/ejects?  yes, by sd_cd gpio pin (on mpp47).
- * - ctl commands for erasing?
- * - erase before writing big buffer?
  */
 
 #include	"u.h"
@@ -858,16 +855,23 @@ sdioio(void *dd, int iswrite, void *buf, long n, vlong off)
 }
 
 static void
-sdiodiskinit(Store *d)
+sdiodevinit(Store *d)
 {
+	Cid *c;
+
 	sdinit();
 	d->size = card.size;
+	c = &card.cid;
+	d->descr = smprint("product %q, serial %#lux, rev %#lux, %d-%d, sdhc %d",
+		c->prodname, c->serial, c->rev, c->year, c->mon, card.sdhc);
 }
 
 
 static Store sdiodisk = {
+.alignmask	= 512-1,
+.devtype	= "sdcard",
 .init		= sdioinit,
-.diskinit	= sdiodiskinit,
+.devinit	= sdiodevinit,
 .rctl		= sdiorctl,
 .wctl		= sdiowctl,
 .io		= sdioio,

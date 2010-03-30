@@ -2,16 +2,13 @@
  * hot-pluggable block storage devices
  *
  * todo:
- * - locking
+ * - invalidate open files after reinit of device.
+ * - wstat, to change owner/perm
+ *
+ * - add hooks so devices can tell they have gone/arrived.
  * - understand extended partitions
  * - hotplug & events, make event-file per Qdiskpart too.
- * - think about returning a type of device, eg "ata", "sdcard"
- * - think about raw command access.
- * - think about allowing setting of block size and required alignment.
- * - add hooks so devices can tell they have gone/arrived.
- * - invalidate open files after reinit of device.
  * - think of way to update the partition table.  for now, write to the data file, then reinit the device.
- * - wstat, to change owner/perm
  */
 
 #include	"u.h"
@@ -23,8 +20,16 @@
 #include	"part.h"
 #include	"bs.h"
 
-static char Enodisk[] = "no such disk";
+static char Enodisk[] = "no disk";
 static char Enopart[] = "no such partition";
+static char Ebadalign[] = "misaligned request";
+
+typedef struct Buf Buf;
+struct Buf
+{
+	long	n;
+	char	*a;
+};
 
 #define QTYPE(v)	((int)((v)>>0 & 0xff))
 #define QDISK(v)	((int)((v)>>8 & 0xff))
@@ -47,25 +52,42 @@ Dirtab bstab[] = {
 	"xxx",		{Qdiskpart},		0,	0660,
 };
 
-static QLock disksl;
-static Store **disks = nil;	/* indexed by Store.num */
-static int maxdisk = 0;	/* highest index of disk */
+static struct {
+	RWlock;
+	Store**	disks;		/* indexed by Store.num */
+	int	maxdisk;	/* highest index of disk */
+} bs;
 
 static Store*
 diskget(int num)
 {
-	if(num >= 0 && num <= maxdisk && disks[num] != nil)
-		return disks[num];
+	if(num >= 0 && num <= bs.maxdisk && bs.disks[num] != nil)
+		return bs.disks[num];
 	return nil;
 }
 
+enum {
+	/* arg "wl" */
+	Readlock	= 0,
+	Writelock	= 1,
+};
+/* returns r or w-locked Store */
 static Store*
-xdiskget(int num)
+diskgetlock(int num, int wl)
 {
 	Store *d;
+
+	rlock(&bs);
 	d = diskget(num);
-	if(d == nil)
+	if(d == nil) {
+		runlock(&bs);
 		error(Enodisk);
+	}
+	if(wl)
+		wlock(d);
+	else
+		rlock(d);
+	runlock(&bs);
 	return d;
 }
 
@@ -84,14 +106,10 @@ partdata(Part *p, vlong size)
 }
 
 static void
-diskinit(int num)
+diskinit(Store *d)
 {
-	Store *d;
-
-	d = diskget(num);
-	if(d == nil)
-		error(Enodisk);
-	d->diskinit(d);
+	d->devinit(d);
+	d->ready = 1;
 
 	d->parts = smalloc(sizeof d->parts[0]);
 	partdata(&d->parts[0], d->size);
@@ -104,8 +122,6 @@ diskinit(int num)
 	if(d->nparts < 0)
 		error("partinit");
 	poperror();
-
-	d->num = num;
 }
 
 static Part*
@@ -133,6 +149,8 @@ io(Store *d, Part *p, int iswrite, void *buf, long n, vlong off)
 
 	if(off < 0 || n < 0)
 		error(Ebadarg);
+	if(off & d->alignmask || n & d->alignmask)
+		error(Ebadalign);
 	s = off;
 	e = off+n;
 	if(s > p->size)
@@ -177,13 +195,15 @@ bsgen(Chan *c, char *, Dirtab *, int, int i, Dir *dp)
 			return 1;
 		}
 		i -= 2;
-		if(i > maxdisk)
+		if(i > bs.maxdisk)
 			return -1;
 		d = diskget(i);
-		if(d == nil)
+		if(d == nil || d->ready == 0)
 			return 0;
 		t = &bstab[Qdiskdir];
+		rlock(d);
 		devdir(c, (Qid){QPATH(0,d->num,Qdiskdir),0,QTDIR}, d->name, t->length, eve, t->perm, dp);
+		runlock(d);
 		return 1;
 
         case Qdiskdir:
@@ -193,7 +213,7 @@ bsgen(Chan *c, char *, Dirtab *, int, int i, Dir *dp)
 	case Qdiskevent:
 	case Qdiskpart:
 		d = diskget(QDISK(c->qid.path));
-		if(d == nil)
+		if(d == nil || d->ready == 0)
 			return -1;
 		if(i >= 0 && i < Qdiskevent-Qdiskctl+1) {
 			t = &bstab[Qdiskctl+i];
@@ -223,17 +243,32 @@ bsinit(void)
 	int i;
 	Store *d;
 
-	for(i = 0; i <= maxdisk; i++) {
+	wlock(&bs);
+	if(waserror()) {
+		wunlock(&bs);
+		nexterror();
+	}
+
+	for(i = 0; i <= bs.maxdisk; i++) {
 		d = diskget(i);
-		if(d == nil)
+		if(d == nil || d->ready)
 			continue;
+		wlock(d);
 		if(waserror()) {
 			// xxx  mark disk as bad/not yet initialized
+			wunlock(d);
 			continue;
 		}
+
 		d->init(d);
+		diskinit(d);
+
 		poperror();
+		wunlock(d);
 	}
+
+	poperror();
+	wunlock(&bs);
 }
 
 static Chan*
@@ -245,32 +280,125 @@ bsattach(char* spec)
 static Walkqid*
 bswalk(Chan *c, Chan *nc, char **name, int nname)
 {
-	return devwalk(c, nc, name, nname, nil, 0, bsgen);
+	Walkqid *r;
+	Store *d;
+	int storelock;
+
+	rlock(&bs);
+	if(waserror()) {
+		runlock(&bs);
+		nexterror();
+	}
+
+	storelock = QTYPE(c->qid.path) >= Qdiskdir;
+	if(storelock) {
+		d = diskget(QDISK(c->qid.path));
+		if(d == nil || d->ready == 0)
+			error(Enodisk);
+		rlock(d);
+		if(waserror()) {
+			runlock(d);
+			nexterror();
+		}
+
+		r = devwalk(c, nc, name, nname, nil, 0, bsgen);
+
+		poperror();
+		runlock(d);
+	} else
+		r = devwalk(c, nc, name, nname, nil, 0, bsgen);
+
+	poperror();
+	runlock(&bs);
+	return r;
 }
 
 static int
 bsstat(Chan* c, uchar *db, int n)
 {
-	return devstat(c, db, n, nil, 0, bsgen);
+	Store *d;
+	int storelock;
+
+	rlock(&bs);
+	if(waserror()) {
+		runlock(&bs);
+		nexterror();
+	}
+
+	storelock = QTYPE(c->qid.path) >= Qdiskdir;
+	if(storelock) {
+		d = diskget(QDISK(c->qid.path));
+		if(d == nil || d->ready == 0)
+			error(Enodisk);
+		rlock(d);
+		if(waserror()) {
+			runlock(d);
+			nexterror();
+		}
+
+		n = devstat(c, db, n, nil, 0, bsgen);
+
+		poperror();
+		runlock(d);
+	} else
+		n = devstat(c, db, n, nil, 0, bsgen);
+
+	poperror();
+	runlock(&bs);
+	return n;
 }
 
 static Chan*
 bsopen(Chan* c, int omode)
 {
+	Part *p;
 	Store *d;
-	Part *p = nil;
+	int storelock;
+	void (*lockf)(RWlock *) = rlock;
+	void (*unlockf)(RWlock *) = runlock;
+
+	rlock(&bs);
+	if(waserror()) {
+		runlock(&bs);
+		nexterror();
+	}
+
+	SET(d);
+	storelock = QTYPE(c->qid.path) >= Qdiskdir;
+	if(storelock) {
+		if(QTYPE(c->qid.path) == Qdiskdir) {
+			lockf = wlock;
+			unlockf = wunlock;
+		}
+		d = diskget(QDISK(c->qid.path));
+		if(d == nil || d->ready == 0)
+			error(Enodisk);
+		lockf(d);
+		if(waserror()) {
+			unlockf(d);
+			nexterror();
+		}
+	}
 
 	if(QTYPE(c->qid.path) == Qdiskpart) {
-		d = xdiskget(QDISK(c->qid.path));
 		p = xpartget(d, QPART(c->qid.path));
 		if(p->index == 0)
 			p = nil;
 		else if(p->isopen)
 			error(Einuse);
-	}
-	c = devopen(c, omode, nil, 0, bsgen);
-	if(p != nil)
+
+		c = devopen(c, omode, nil, 0, bsgen);
 		p->isopen++;
+	} else
+		c = devopen(c, omode, nil, 0, bsgen);
+
+	if(storelock) {
+		poperror();
+		unlockf(d);
+	}
+
+	poperror();
+	runlock(&bs);
 	return c;
 }
 
@@ -287,48 +415,185 @@ bsclose(Chan* c)
 {
 	Store *d;
 	Part *p;
+	Buf *b;
 
 	if(QTYPE(c->qid.path) == Qdiskpart && c->flag&COPEN && QPART(c->qid.path) != 0) {
-		d = xdiskget(QDISK(c->qid.path));
+		d = diskgetlock(QDISK(c->qid.path), Writelock);
+		if(waserror()) {
+			wunlock(d);
+			nexterror();
+		}
+
 		p = xpartget(d, QPART(c->qid.path));
 		if(p->isopen != 1)
 			panic("devclose on part.isopen != 1");
 		p->isopen = 0;
+
+		poperror();
+		wunlock(d);
 	}
+
+	if(QTYPE(c->qid.path) == Qdiskraw && c->aux != nil) {
+		b = c->aux;
+		free(b->a);
+		free(b);
+		c->aux = nil;
+	}
+}
+
+static long
+bsdevread(Chan* c, void* a, long n, vlong off)
+{
+	Store *d;
+	Part *p;
+	char *buf, *s, *e;
+	int i;
+
+	d = diskgetlock(QDISK(c->qid.path), Readlock);
+	if(waserror()) {
+		runlock(d);
+		nexterror();
+	}
+
+	switch(QTYPE(c->qid.path)) {
+	default:
+		panic("bsdevread, qtype %x unhandled", QTYPE(c->qid.path));
+
+	case Qdiskctl:
+		buf = malloc(READSTR);
+		if(buf == nil)
+			error(Enomem);
+		if(waserror()) {
+			free(buf);
+			poperror();
+		}
+
+		s = buf;
+		e = buf+READSTR;
+		s = seprint(s, e, "devtype %q\ndescr %q\nalign %ud\nsize %lld\n",
+			d->devtype, d->descr, d->alignmask+1, d->size);
+		for(i = 1; i < d->nparts; i++) {
+			p = &d->parts[i];
+			s = seprint(s, e, "part %q %lld %lld\n", p->name, p->s, p->e);
+		}
+		n = readstr(off, a, n, buf);
+
+		poperror();
+		free(buf);
+		break;
+
+	case Qdiskdevctl:
+		p = xpartget(d, 0);
+		devpermcheck(p->uid, p->perm, OREAD);
+		n = d->rctl(d, a, n, off);
+		break;
+
+	case Qdiskpart:
+		p = xpartget(d, QPART(c->qid.path));
+		n = io(d, p, 0, a, n, off);
+		break;
+	}
+
+	poperror();
+	runlock(d);
+	return n;
 }
 
 static long
 bsread(Chan* c, void* a, long n, vlong off)
 {
+	Buf *b;
 	Store *d;
-	Part *p;
+	int storelock;
+	char *buf, *s, *e;
+	int i;
 
 	switch(QTYPE(c->qid.path)){
 	case Qdir:
 	case Qdiskdir:
-		return devdirread(c, a, n, nil, 0, bsgen);
+		rlock(&bs);
+		if(waserror()) {
+			runlock(&bs);
+			nexterror();
+		}
+
+		storelock = QTYPE(c->qid.path) >= Qdiskdir;
+		if(storelock) {
+			d = diskget(QDISK(c->qid.path));
+			if(d == nil || d->ready == 0)
+				error(Enodisk);
+			rlock(d);
+			if(waserror()) {
+				runlock(d);
+				nexterror();
+			}
+
+			n = devdirread(c, a, n, nil, 0, bsgen);
+
+			poperror();
+			runlock(d);
+		} else
+			n = devdirread(c, a, n, nil, 0, bsgen);
+
+		poperror();
+		runlock(&bs);
+		break;
+
 	case Qbsctl:
-		// xxx should print info about initialized disks.  perhaps only registered too.
-		error("not yet");
+		buf = smalloc(READSTR);
+		s = buf;
+		e = s+READSTR;
+		if(waserror()) {
+			free(buf);
+			nexterror();
+		}
+
+		rlock(&bs);
+		if(waserror()) {
+			runlock(&bs);
+			nexterror();
+		}
+
+		for(i = 0; i <= bs.maxdisk; i++) {
+			d = bs.disks[i];
+			if(d == nil)
+				continue;
+			if(d->ready)
+				s = seprint(s, e, "%q, devtype %q, size %lld, partitions %d\n",
+					d->name, d->devtype, d->size, d->nparts-1);
+			else
+				s = seprint(s, e, "%q, devtype %q\n", d->name, d->devtype);
+		}
+		n = readstr(off, a, n, buf);
+
+		poperror();
+		runlock(&bs);
+
+		poperror();
+		free(buf);
+		break;
+
 	case Qbsevent:
 		error("not yet");
 	case Qdiskctl:
-		error("not yet");
 	case Qdiskdevctl:
-		d = xdiskget(QDISK(c->qid.path));
-		p = xpartget(d, 0);
-		devpermcheck(p->uid, p->perm, OREAD);
-		n = d->rctl(d, a, n, off);
+	case Qdiskpart:
+		n = bsdevread(c, a, n, off);
 		break;
+
 	case Qdiskraw:
-		error("not implemented");
+		if(c->aux == nil)
+			error("no command executed");
+		b = c->aux;
+		if(off > b->n)
+			off = b->n;
+		if(off+n > b->n)
+			n = b->n-off;
+		memmove(a, b->a+off, n);
+		break;
+
 	case Qdiskevent:
 		error("not yet");
-	case Qdiskpart:
-		d = xdiskget(QDISK(c->qid.path));
-		p = xpartget(d, QPART(c->qid.path));
-		n = io(d, p, 0, a, n, off);
-		break;
 
 	default:
 		n = 0;
@@ -351,6 +616,58 @@ static Cmdtab bsdiskctl[] = {
 };
 
 static long
+bsdevwrite(Chan* c, void* a, long n, vlong off)
+{
+	Store *d;
+	Part *p;
+	Buf *b;
+
+	d = diskgetlock(QDISK(c->qid.path), Readlock);
+	if(waserror()) {
+		runlock(d);
+		nexterror();
+	}
+
+	switch(QTYPE(c->qid.path)) {
+	default:
+		panic("bsdevwrite, qtype %x unhandled", QTYPE(c->qid.path));
+
+	case Qdiskdevctl:
+		if(off != 0)
+			error(Ebadarg);
+		p = xpartget(d, 0);
+		devpermcheck(p->uid, p->perm, OWRITE);
+		n = d->wctl(d, a, n);
+		break;
+
+	case Qdiskraw:
+		p = xpartget(d, 0);
+		devpermcheck(p->uid, p->perm, OWRITE);
+		if(d->raw == nil)
+			error("raw commands not implemented by device");
+		b = c->aux;
+		if(b != nil)
+			free(b->a);
+		else
+			c->aux = b = smalloc(sizeof b[0]);
+		b->a = nil;
+		b->n = d->raw(d, a, n, off, &b->a);
+		if(b->n < 0)
+			n = b->n;
+		break;
+
+	case Qdiskpart:
+		p = xpartget(d, QPART(c->qid.path));
+		n = io(d, p, 0, a, n, off);
+		break;
+	}
+
+	poperror();
+	runlock(d);
+	return n;
+}
+
+static long
 bswrite(Chan* c, void* a, long n, vlong off)
 {
 	Cmdbuf *cb;
@@ -359,16 +676,16 @@ bswrite(Chan* c, void* a, long n, vlong off)
 	Part *p;
 	int num;
 
-	qlock(&disksl);
-	if(waserror()) {
-		qunlock(&disksl);
-		nexterror();
-	}
-
 	switch(QTYPE(c->qid.path)){
 	case Qbsctl:
 		if(!iseve())
 			error(Eperm);
+
+		wlock(&bs);
+		if(waserror()) {
+			wunlock(&bs);
+			nexterror();
+		}
 
 		cb = parsecmd(a, n);
 		if(waserror()) {
@@ -379,18 +696,46 @@ bswrite(Chan* c, void* a, long n, vlong off)
 		switch(ct->index) {
 		case CMinit:
 			num = atoi(cb->f[1]);
-			diskinit(num);
+			d = diskget(num);
+			if(d == nil)
+				error(Enodisk);
+			// xxx if d->ready, might have to clean up first?
+			wlock(d);
+			if(waserror()) {
+				wunlock(d);
+				nexterror();
+			}
+			diskinit(d);
+			poperror();
+			wunlock(d);
 			break;
 		}
 		poperror();
 		free(cb);
+
+		poperror();
+		wunlock(&bs);
 		break;
 
 	case Qbsevent:
 		error("not yet");
 
 	case Qdiskctl:
-		d = xdiskget(QDISK(c->qid.path));
+		wlock(&bs);
+		if(waserror()) {
+			wunlock(&bs);
+			nexterror();
+		}
+
+		d = diskget(QDISK(c->qid.path));
+		if(d == nil)
+			error(Enodisk);
+		wlock(d);
+		if(waserror()) {
+			wunlock(d);
+			nexterror();
+		}
+
 		p = partget(d, 0);
 		if(p != nil)
 			devpermcheck(p->uid, p->perm, OWRITE);
@@ -405,36 +750,29 @@ bswrite(Chan* c, void* a, long n, vlong off)
 		ct = lookupcmd(cb, bsdiskctl, nelem(bsdiskctl));
 		switch(ct->index) {
 		case CMdiskinit:
-			diskinit(d->num);
+			diskinit(d);
+			// xxx if d->ready, might have to clean up first?
 			break;
 		}
 		poperror();
 		free(cb);
+
+		poperror();
+		wunlock(d);
+
+		poperror();
+		wunlock(&bs);
 		break;
 
 	case Qdiskdevctl:
-		if(off != 0)
-			error(Ebadarg);
-		d = xdiskget(QDISK(c->qid.path));
-		p = xpartget(d, 0);
-		devpermcheck(p->uid, p->perm, OWRITE);
-		n = d->wctl(d, a, n);
-		break;
-
 	case Qdiskraw:
-		error("not implemented");
-
 	case Qdiskpart:
-		d = xdiskget(QDISK(c->qid.path));
-		p = xpartget(d, QPART(c->qid.path));
-		n = io(d, p, 0, a, n, off);
+		n = bsdevwrite(c, a, n, off);
 		break;
+
 	default:
 		error(Ebadusefd);
 	}
-
-	poperror();
-	qunlock(&disksl);
 	return n;
 }
 
@@ -462,21 +800,21 @@ Dev bsdevtab = {
 void
 blockstoreadd(Store *d)
 {
-	qlock(&disksl);
+	wlock(&bs);
 	if(d->num > 99)
 		panic("bad block store num %d", d->num);
 	if(diskget(d->num) != nil)
 		panic("disk.num %d already registered", d->num);
 
-	if(d->num > maxdisk) {
-		disks = realloc(disks, sizeof disks[0]*(d->num+1));
-		if(disks == nil)
+	if(d->num > bs.maxdisk) {
+		bs.disks = realloc(bs.disks, sizeof bs.disks[0]*(d->num+1));
+		if(bs.disks == nil)
 			panic("no memory");
-		while(maxdisk < d->num)
-			disks[maxdisk++] = nil;
+		while(bs.maxdisk < d->num)
+			bs.disks[bs.maxdisk++] = nil;
 	}
 		
-	disks[d->num] = d;
+	bs.disks[d->num] = d;
 	snprint(d->name, sizeof d->name, "bs%02d", d->num);
-	qunlock(&disksl);
+	wunlock(&bs);
 }
