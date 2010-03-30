@@ -2,9 +2,6 @@
  * hot-pluggable block storage devices
  *
  * todo:
- * - invalidate open files after reinit of device.
- * - wstat, to change owner/perm
- *
  * - add hooks so devices can tell they have gone/arrived.
  * - understand extended partitions
  * - hotplug & events, make event-file per Qdiskpart too.
@@ -23,6 +20,7 @@
 static char Enodisk[] = "no disk";
 static char Enopart[] = "no such partition";
 static char Ebadalign[] = "misaligned request";
+static char Estale[] = "disk changed";
 
 typedef struct Buf Buf;
 struct Buf
@@ -108,6 +106,7 @@ partdata(Part *p, vlong size)
 static void
 diskinit(Store *d)
 {
+	d->vers++;
 	d->devinit(d);
 	d->ready = 1;
 
@@ -168,6 +167,7 @@ bsgen(Chan *c, char *, Dirtab *, int, int i, Dir *dp)
 	Dirtab *t;
 	Store *d;
 	Part *p;
+	Qid qid;
 
 //print("bsgen, c->qid.path %#llux, i %d\n", c->qid.path, i);
 
@@ -202,7 +202,8 @@ bsgen(Chan *c, char *, Dirtab *, int, int i, Dir *dp)
 			return 0;
 		t = &bstab[Qdiskdir];
 		rlock(d);
-		devdir(c, (Qid){QPATH(0,d->num,Qdiskdir),0,QTDIR}, d->name, t->length, eve, t->perm, dp);
+		mkqid(&qid, QPATH(0,d->num,Qdiskdir), 0, QTDIR);
+		devdir(c, qid, d->name, t->length, eve, t->perm, dp);
 		runlock(d);
 		return 1;
 
@@ -217,14 +218,16 @@ bsgen(Chan *c, char *, Dirtab *, int, int i, Dir *dp)
 			return -1;
 		if(i >= 0 && i < Qdiskevent-Qdiskctl+1) {
 			t = &bstab[Qdiskctl+i];
-			devdir(c, (Qid){QPATH(0,d->num,Qdiskctl+i),0,QTFILE}, t->name, t->length, eve, t->perm, dp);
+			mkqid(&qid, QPATH(0,d->num,Qdiskctl+i), 0, QTFILE);
+			devdir(c, qid, t->name, t->length, eve, t->perm, dp);
 			return 1;
 		}
 		i -= Qdiskevent-Qdiskctl+1;
 		if(i >= d->nparts)
 			return -1;
 		p = &d->parts[i];
-		devdir(c, (Qid){QPATH(i,d->num,Qdiskpart),0,QTFILE}, p->name, p->size, p->uid, p->perm, dp);
+		mkqid(&qid, QPATH(i,d->num,Qdiskpart), 0, QTFILE);
+		devdir(c, qid, p->name, p->size, p->uid, p->perm, dp);
 		return 1;
 	}
 	return -1;
@@ -393,6 +396,7 @@ bsopen(Chan* c, int omode)
 		c = devopen(c, omode, nil, 0, bsgen);
 
 	if(storelock) {
+		c->qid.vers = d->vers;
 		poperror();
 		unlockf(d);
 	}
@@ -405,8 +409,36 @@ bsopen(Chan* c, int omode)
 static int
 bswstat(Chan* c, uchar *dp, int n)
 {
-	USED(c, dp);
-	error(Eperm);
+	Store *d;
+	Part *p;
+	Dir dir;
+	int nn;
+
+	if(QTYPE(c->qid.path) != Qdiskpart)
+		error(Eperm);
+
+	nn = convM2D(dp, n, &dir, nil);
+	if(nn == 0)
+		error(Eshortstat);
+	if(dir.atime != ~0 || dir.mtime != ~0 || dir.length != ~0 || *dir.name || *dir.gid || *dir.muid)
+		error(Eperm);
+
+	d = diskgetlock(QDISK(c->qid.path), Writelock);
+	if(waserror()) {
+		wunlock(d);
+		nexterror();
+	}
+
+	p = xpartget(d, 0);
+	if(!iseve())
+		devpermcheck(p->uid, p->perm, OWRITE);
+	if(*dir.uid)
+		kstrcpy(p->uid, dir.uid, sizeof p->uid);
+	if(dir.mode != ~0)
+		p->perm = dir.mode&0666;
+
+	poperror();
+	wunlock(d);
 	return n;
 }
 
@@ -454,6 +486,9 @@ bsdevread(Chan* c, void* a, long n, vlong off)
 		runlock(d);
 		nexterror();
 	}
+
+	if(c->qid.vers != d->vers)
+		error(Estale);
 
 	switch(QTYPE(c->qid.path)) {
 	default:
@@ -628,6 +663,9 @@ bsdevwrite(Chan* c, void* a, long n, vlong off)
 		nexterror();
 	}
 
+	if(c->qid.vers != d->vers)
+		error(Estale);
+
 	switch(QTYPE(c->qid.path)) {
 	default:
 		panic("bsdevwrite, qtype %x unhandled", QTYPE(c->qid.path));
@@ -735,6 +773,9 @@ bswrite(Chan* c, void* a, long n, vlong off)
 			wunlock(d);
 			nexterror();
 		}
+
+		if(c->qid.vers != d->vers)
+			error(Estale);
 
 		p = partget(d, 0);
 		if(p != nil)

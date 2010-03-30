@@ -5,6 +5,7 @@ struct Store
 	RWlock;			/* devbs rlocks for: rctl,wctl,io,raw.  wlocks for: init,diskinit,modifying values */
 	void	*ctlr;
 
+	int	vers;			/* version, increased for each devinit. */
 	int	ready;			/* whether device initialised and ready for use */
 	int	num;
 	char	name[4+1];		/* "bs%02d", num */
