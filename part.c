@@ -95,7 +95,7 @@ partclear(Part *p)
 }
 
 static Part*
-partalloc(Part *p, int np)
+partrealloc(Part *p, int np)
 {
 	p = realloc(p, sizeof p[0]*(np+1));
 	if(p == nil)
@@ -121,7 +121,7 @@ partinit(long (*r)(void *, int, void *, long, vlong), void *disk, vlong size, Pa
 	int nparts = 1;
 	Part *parts = *partsp;
 	char *s, *e;
-	char *f[3];
+	char *f[4];
 	int nf;
 
 	n = r(disk, 0, p, 512, 0);
@@ -135,7 +135,7 @@ partinit(long (*r)(void *, int, void *, long, vlong), void *disk, vlong size, Pa
 	for(i = 0; i < 4; i++) {
 		o = 446+i*16;
 
-		*partsp = parts = partalloc(parts, nparts);
+		*partsp = parts = partrealloc(parts, nparts);
 		pp = &parts[nparts];
 		partclear(pp);
 		pp->index = nparts;
@@ -170,19 +170,21 @@ partinit(long (*r)(void *, int, void *, long, vlong), void *disk, vlong size, Pa
 				break;
 			*e = 0;
 			nf = tokenize(s, f, nelem(f));
-			if(nf != 3)
+			if(nf != nelem(f) || strcmp(f[0], "part") != 0)
 				error("bad plan 9 partition table");
 			s = e+1;
 
-			*partsp = parts = partalloc(parts, nparts);
+			*partsp = parts = partrealloc(parts, nparts);
 			pp = &parts[nparts];
 			partclear(pp);
 			pp->index = nparts;
-			partgenname(pp, parts, nparts, f[0], f[0]);
-			pp->s = (vlong)strtoull(f[1], nil, 0)*512;
-			pp->e = (vlong)strtoull(f[2], nil, 0)*512;
+			partgenname(pp, parts, nparts, f[1], f[1]);
+			pp->s = (vlong)strtoull(f[2], nil, 0)*512;
+			pp->e = (vlong)strtoull(f[3], nil, 0)*512;
 			pp->size = pp->e-pp->s;
-			partcheck(pp, parts, nparts, size);
+			partcheck(pp, parts+i, nparts-i, parts[i].size);
+			pp->s += parts[i].s;
+			pp->e += parts[i].e;
 			nparts++;
 			printpartadd(pp);
 		}

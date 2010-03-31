@@ -21,10 +21,17 @@
 #include	"bs.h"
 
 
-#define DEBUG 0
-#define dprint	if(DEBUG)print
+static int debug = 0;
+#define dprint	if(debug)print
 
 char Enocard[] = "no card";
+
+static struct {
+	QLock;
+	Card	card;
+	Rendez	cmdr;
+	int	preerase;
+} sdio;
 
 enum {
 	/* keep in sync with errstrs[] */
@@ -174,10 +181,6 @@ enum {
 };
 
 
-static Card card;
-static Rendez cmdr;
-static QLock sdl;
-
 /* for bits in st, est, acmd12st registers */
 static const char *statusstrs[] = {
 "cmdcomplete", "xfercomplete", "blockgapevent", "dmaintr",
@@ -250,27 +253,33 @@ static const char *statestrs[] = {
 "", "", "", "",
 };
 
-static void
-printstatus(char *s, ulong st, ulong est, ulong acmd12st)
-{
-	char *p, *e;
+/*
+		p = buf = smalloc(READSTR);
+		e = p+READSTR;
 
-	USED(s);
-	if(!DEBUG)
-		return;
+		p = seprint(p, e, "st:       ");
+		p = statusstr(p, e, r->st);
+		p = seprint(p, e, "\nest:      ");
+		p = errstatusstr(p, e, r->est);
+		p = seprint(p, e, "\nacmd12st: ");
+		p = acmd12ststr(p, e, r->acmd12st);
 
-	p = up->genbuf;
-	e = p+sizeof (up->genbuf);
+		p = seprint(p, e, "\nstena:    ");
+		p = statusstr(p, e, r->stena);
+		p = seprint(p, e, "\nestena:   ");
+		p = errstatusstr(p, e, r->estena);
 
-	p = statusstr(p, e, st);
-	p = seprint(p, e, ";");
-	p = errstatusstr(p, e, est);
-	p = seprint(p, e, ";");
-	p = acmd12ststr(p, e, acmd12st);
-	USED(p);
+		p = seprint(p, e, "\nstirq:    ");
+		p = statusstr(p, e, r->stirq);
+		p = seprint(p, e, "\nestirq:   ");
+		p = errstatusstr(p, e, r->estirq);
 
-	print("status: %s%s\n", s, up->genbuf);
-}
+		p = seprint(p, e, "\nhoststate %#lux\n", r->hoststate);
+		USED(p);
+
+		n = readstr(offset, a, n, buf);
+		free(buf);
+*/
 
 
 static const char *errstrs[] = {
@@ -288,10 +297,10 @@ errorsd(char *s, int v)
 	if(v != SDOk)
 		p = seprint(p, e, ": %s", errstrs[-v]);
 	if(v == SDBadstatus)
-		p = seprint(p, e, " (r1status %#lux)", card.status);
+		p = seprint(p, e, " (r1status %#lux)", sdio.card.status);
 	if(v == SDError) {
-		p = seprint(p, e, " (est %#lux", card.status);
-		p = errstatusstr(p, e, card.status);
+		p = seprint(p, e, " (est %#lux", sdio.card.status);
+		p = errstatusstr(p, e, sdio.card.status);
 		p = seprint(p, e, ")");
 	}
 	USED(p);
@@ -325,7 +334,7 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 	ulong need, v;
 	uvlong w;
 
-	print("sdcmd, cmd %lud, arg %lud, fl %#lux\n", cmd, arg, fl);
+	dprint("sdcmd, cmd %lud, arg %lud, fl %#lux\n", cmd, arg, fl);
 
 	i = 0;
 	for(;;) {
@@ -340,7 +349,7 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 		acmd = 55;
 		if(fl & Fappdata)
 			acmd = 56;
-		s = sdcmd(c, acmd, card.rca<<16, R1, 0);
+		s = sdcmd(c, acmd, c->rca<<16, R1, 0);
 		if(s < 0)
 			return s;
 		if((c->resp[2]>>8 & SDappcmd) == 0)
@@ -351,8 +360,6 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 	r->st = ~0;
 	r->est = ~0;
 	r->acmd12st = ~0;
-	// xxx remove?
-	printstatus("before cmd: ", r->st, r->est, r->acmd12st);
 
 	/* prepare args & execute command */
 	r->arglo = arg>>0 & MASK(16);
@@ -381,29 +388,29 @@ sdcmd(Card *c, ulong cmd, ulong arg, int rt, ulong fl)
 	r->cmd = cmd<<CMDshift|cmdopts|resptypes[rt];
 
 	/* Scmdcomplete/Sdma and errors signal completion */
-	s = 0;
 	need = Scmdcomplete;
 	if(fl & (Fdmad2h|Fdmah2d))
 		need = Sdmaintr;
 	r->stirq = need|Sunexpresp|Serror;
 	r->estirq = ~0;
 
+	v = r->stirq;
+	s = 0;
 	while(waserror())
 		s = SDInterrupted;
-	v = r->stirq;
-	tsleep(&cmdr, sdiodone, &v, 5000);
+	tsleep(&sdio.cmdr, sdiodone, &v, 5000);
 	poperror();
-	if(s == SDInterrupted)
+	if(s != 0)
 		return s;
 
 	if(r->st & (Sunexpresp|Serror)) {
-		card.status = r->est;
+		c->status = r->est;
+		if(c->status & Ecmdtimeout)
+			return SDTimeout;
 		return SDError;
 	}
 	if((r->st & need) == 0)
 		return SDTimeout;
-
-	printstatus("success", r->st, r->est, r->acmd12st);
 
 	/* fetch the response */
 	memset(c->resp, 0, sizeof c->resp);
@@ -468,7 +475,7 @@ static void
 sdclock(ulong v)
 {
 	SDIOREG->clockdiv = ((100*1000*1000)/v)-1;
-	delay(1);
+	tsleep(&up->sleep, return0, nil, 10);
 }
 
 static void
@@ -477,12 +484,13 @@ sdinit(void)
 	int i, s;
 	ulong v;
 	SdioReg *r = SDIOREG;
+	Card *c = &sdio.card;
 
-	sdclock(400*1000);
 	r->hostctl &= ~HChighspeed;
+	sdclock(400*1000);
 
 	/* force card to idle state */
-	s = sdcmd(&card, 0, 0, R0, 0);
+	s = sdcmd(c, 0, 0, R0, 0);
 	if(s < 0)
 		errorsd("reset failed", s);
 
@@ -490,15 +498,15 @@ sdinit(void)
 	 * "send interface command".  only >=2.00 cards will respond.
 	 * we send a check pattern and supported voltage range.
 	 */
-	card.mmc = 0;
-	card.sd2 = 0;
-	card.sdhc = 0;
-	card.rca = 0;
-	s = sdcmd(&card, 8, CMD8voltage|CMD8pattern, R7, 0);
+	c->mmc = 0;
+	c->sd2 = 0;
+	c->sdhc = 0;
+	c->rca = 0;
+	s = sdcmd(c, 8, CMD8voltage|CMD8pattern, R7, 0);
 	switch(s) {
 	case SDOk:
-		card.sd2 = 1;
-		v = card.resp[2]>>8;
+		c->sd2 = 1;
+		v = c->resp[2]>>8;
 		if((v & CMD8patternmask) != CMD8pattern)
 			error("check pattern mismatch");
 		if((v & CMD8voltagemask) != CMD8voltage)
@@ -508,7 +516,7 @@ sdinit(void)
 	case SDTimeout:
 	case SDError:	/* "no response" from spec can result in error too apparently */
 		/* sd 1.x or not an sd memory card */
-		s = sdcmd(&card, 0, 0, R0, 0);
+		s = sdcmd(c, 0, 0, R0, 0);
 		if(s < 0)
 			errorsd("reset failed", s);
 		break;
@@ -525,149 +533,152 @@ sdinit(void)
 	i = 0;
 	for(;;) {
 		v = ACMD41voltagewindow;
-		if(card.sd2)
+		if(c->sd2)
 			v |= ACMD41sdhcsupported;
-		s = sdcmd(&card, 41, v, R3, Fapp);
+		s = sdcmd(c, 41, v, R3, Fapp);
 		if(s < 0) {
-			if(s == SDTimeout && !card.sd2)
-				card.mmc = 1;
+			if(s == SDTimeout && !c->sd2)
+				c->mmc = 1;
 			errorsd("exchange voltage/sdhc support info", s);
 		}
-		v = card.resp[2]>>8;
+		v = c->resp[2]>>8;
 		if((v & ACMD41voltagewindow) == 0)
 			error("voltage not supported");
 		if(v & ACMD41ready) {
-			card.sdhc = (v & ACMD41sdhcsupported) != 0;
+			c->sdhc = (v & ACMD41sdhcsupported) != 0;
 			break;
 		}
 
 		if(i++ >= 100)
 			error("sd card failed to power up");
-		tsleep(&up->sleep, return0, nil, 10);
+		tsleep(&up->sleep, return0, nil, i);
 	}
-	dprint("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", card.mmc, card.sd2, card.sdhc);
-	if(card.mmc)
-		error("mmc cards not yet supported"); // xxx p14 says this involves sending cmd1
+	dprint("acmd41 done, mmc %d, sd2 %d, sdhc %d\n", c->mmc, c->sd2, c->sdhc);
+	if(c->mmc)
+		error("possibly mmc card, not yet supported"); // xxx p14 says this involves sending cmd1
 
-	s = sdcmd(&card, 2, 0, R2, 0);
+	s = sdcmd(c, 2, 0, R2, 0);
 	if(s < 0)
 		errorsd("card identification", s);
-	if(parsecid(&card.cid, card.resp) < 0)
+	if(parsecid(&c->cid, c->resp) < 0)
 		error("bad cid register");
 
 	i = 0;
 	for(;;) {
-		s = sdcmd(&card, 3, 0, R6, 0);
+		s = sdcmd(c, 3, 0, R6, 0);
 		if(s < 0)
 			errorsd("getting relative address", s);
-		card.rca = card.resp[2]>>24 & MASK(16);
-		v = card.resp[2]>>8 & MASK(16);
-		dprint("have card rca %ux, status %lux\n", card.rca, v);
+		c->rca = c->resp[2]>>24 & MASK(16);
+		v = c->resp[2]>>8 & MASK(16);
+		dprint("have card rca %ux, status %lux\n", c->rca, v);
 		USED(v);
-		if(card.rca != 0)
+		if(c->rca != 0)
 			break;
 		if(i++ == 10)
 			error("card insists on invalid rca 0");
 	}
 
-	s = sdcmd(&card, 9, card.rca<<16, R2, 0);
+	s = sdcmd(c, 9, c->rca<<16, R2, 0);
 	if(s < 0)
 		errorsd("get csd", s);
-	if(parsecsd(&card.csd, card.resp) < 0)
+	if(parsecsd(&c->csd, c->resp) < 0)
 		error("bad csd register");
 
-	if(card.csd.vers == 0) {
-		card.bs = 1<<card.csd.rbl;
-		card.size = card.csd.size+1;
-		card.size *= 1<<(card.csd.v0.sizemult+2);
-		card.size *= 1<<card.csd.rbl;
-		print("csd0, block length read/write %d/%d, size %lld bytes, eraseblock %d\n",
-			1<<card.csd.rbl, 
-			1<<card.csd.wbl,
-			card.size,
-			(1<<card.csd.wbl)*(card.csd.erasesecsz+1));
+	if(c->csd.vers == 0) {
+		c->bs = 1<<c->csd.rbl;
+		c->size = c->csd.size+1;
+		c->size *= 1<<(c->csd.v0.sizemult+2);
+		c->size *= 1<<c->csd.rbl;
+		dprint("csd0, block length read/write %d/%d, size %lld bytes, eraseblock %d\n",
+			1<<c->csd.rbl, 
+			1<<c->csd.wbl,
+			c->size,
+			(1<<c->csd.wbl)*(c->csd.erasesecsz+1));
 	} else {
-		card.bs = 512;
-		card.size = (vlong)(card.csd.size+1)*card.bs*1024;
-		print("csd1, fixed 512 block length, size %lld bytes, eraseblock fixed 512\n", card.size);
+		c->bs = 512;
+		c->size = (vlong)(c->csd.size+1)*c->bs*1024;
+		dprint("csd1, fixed 512 block length, size %lld bytes, eraseblock fixed 512\n", c->size);
 	}
 
-	if(card.sdhc) {
+	if(c->sdhc) {
 		dprint("enabling sdhc & setting clock to 50mhz\n");
-		sdclock(50*1000*1000);
 		r->hostctl |= HChighspeed;
+		sdclock(50*1000*1000);
 	} else {
 		dprint("leaving sdhc off & setting clock to 25mhz\n");
 		sdclock(25*1000*1000);
 	}
 
-	s = sdcmd(&card, 7, card.rca<<16, R1b, 0);
+	s = sdcmd(c, 7, c->rca<<16, R1b, 0);
 	if(s < 0)
 		errorsd("selecting card", s);
 
 	/* xxx have to check with scr register if 4bit buswidth is supported by card.  have not been able to read it though... */
-	s = sdcmd(&card, 6, 1<<1, R1, Fapp);
+	s = sdcmd(c, 6, 1<<1, R1, Fapp);
 	if(s < 0)
 		errorsd("setting buswidth to 4-bit", s);
 
-	s = sdcmd(&card, 16, 512, R1, 0);
+	s = sdcmd(c, 16, 512, R1, 0);
 	if(s < 0)
 		errorsd("setting 512 byte blocksize", s);
 
-	card.valid = 1;
+	c->valid = 1;
 
-	cardstr(up->genbuf, up->genbuf+sizeof (up->genbuf), &card);
-	print("%s", up->genbuf);
+	cardstr(up->genbuf, up->genbuf+sizeof (up->genbuf), c);
+	dprint("%s", up->genbuf);
 }
 
 static int
-sdstatus(uchar *p)
+sdstatus(Card *c, uchar *p)
 {
-	return sdcmddma(&card, 13, 0, p, 64, 1, R1, Fapp|Fdmad2h);
+	return sdcmddma(c, 13, 0, p, 64, 1, R1, Fapp|Fdmad2h);
 }
 
 static int
-erase(vlong offset, long n)
+erase(Card *c, vlong offset, long n)
 {
 	vlong e;
 	int s;
 
 	e = offset+n;
-	if(card.sdhc) {
+	if(c->sdhc) {
 		e -= 512;
 		offset /= 512;
 		e /= 512;
 	} else
 		e -= 1;
 
-	s = sdcmd(&card, 32, offset, R1, 0);	/* first addr to erase */
+	s = sdcmd(c, 32, offset, R1, 0);	/* first addr to erase */
 	if(s >= 0)
-		s = sdcmd(&card, 33, e, R1, 0);	/* last addr to erase (inclusive) */
+		s = sdcmd(c, 33, e, R1, 0);	/* last addr to erase (inclusive) */
 	if(s >= 0)
-		s = sdcmd(&card, 38, 0, R1b, 0);	/* start erasing */
+		s = sdcmd(c, 38, 0, R1b, 0);	/* start erasing */
 	return s;
 }
 
 static long
-sdio(uchar *a, long n, vlong offset, int iswrite)
+sdioio(void *dd, int iswrite, void *buf, long n, vlong off)
 {
+	char *a = buf;
 	ulong cmd, arg, fl, h, nn;
 	int s;
 
-	qlock(&sdl);
+	USED(dd);
+
+	qlock(&sdio);
 	if(waserror()) {
-		qunlock(&sdl);
+		qunlock(&sdio);
 		nexterror();
 	}
 
-	if(card.valid == 0)
+	if(sdio.card.valid == 0)
 		error(Enocard);
 
 	/* xxx we should cover this case with a buffer, and then use the same code to allow non-sector-aligned reads? */
 	if((ulong)a % 4 != 0)
 		error("bad buffer alignment...");
 
-	if(offset & (512-1))
+	if(off & (512-1))
 		error("not sector aligned");
 	if(n & (512-1))
 		error("not multiple of sector size");
@@ -681,19 +692,19 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 
 	h = 0;
 	for(;;) {
-		if(card.sdhc)
-			arg = (offset+h)/512;
+		if(sdio.card.sdhc)
+			arg = (off+h)/512;
 		else
-			arg = offset+h;
+			arg = off+h;
 		nn = n;
 		if(nn > 512*1024)
 			nn = 512*1024;
-		if(iswrite) {
-			s = sdcmd(&card, 23, nn/512, R1, Fapp);
+		if(iswrite && sdio.preerase) {
+			s = sdcmd(&sdio.card, 23, nn/512, R1, Fapp);
 			if(s < 0)
 				errorsd("erase before write", s);
 		}
-		s = sdcmddma(&card, cmd, arg, a+h, 512, nn/512, R1, fl|Fmulti);
+		s = sdcmddma(&sdio.card, cmd, arg, a+h, 512, nn/512, R1, fl|Fmulti);
 		if(s < 0)
 			errorsd("io", s);
 		h += nn;
@@ -701,17 +712,12 @@ sdio(uchar *a, long n, vlong offset, int iswrite)
 			break;
 
 		/* give others a chance */
-		if(waserror()) {
-			qlock(&sdl);
-			nexterror();
-		}
-		qunlock(&sdl);
-		poperror();
-		qlock(&sdl);
+		qunlock(&sdio);
+		qlock(&sdio);
 	}
 
 	poperror();
-	qunlock(&sdl);
+	qunlock(&sdio);
 	return n;
 }
 
@@ -724,7 +730,7 @@ sdiointr(Ureg*, void*)
 	r->stirq = 0;
 	r->estirq = 0;
 	intrclear(Irqlo, IRQ0sdio);
-	wakeup(&cmdr);
+	wakeup(&sdio.cmdr);
 }
 
 static void
@@ -739,19 +745,19 @@ sdioreset(void)
 }
 
 static void
-sdioinit(Store *)
+sdioinit0(void)
 {
 	SdioReg *r = SDIOREG;
 
 	intrdisable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 
-	card.valid = 0;
+	sdio.card.valid = 0;
 
 	/* reset the bus, forcing all cards to idle state */
 	r->swreset = SRresetall;
 	tsleep(&up->sleep, return0, nil, 50);
 
-	sdclock(25*1000*1000);
+	sdclock(100*1000);
 
 	/* configure host controller */
 	r->hostctl = HCpushpull|HCcardmemonly|HCbigendian|HCdatawidth4|HCtimeout(15)|HCtimeoutenable;
@@ -770,34 +776,20 @@ sdioinit(Store *)
 	intrenable(Irqlo, IRQ0sdio, sdiointr, nil, "sdio");
 }
 
-/*
-	case Qstatus:
-		p = buf = smalloc(READSTR);
-		e = p+READSTR;
+static void
+sdioinit(Store *)
+{
+	qlock(&sdio);
+	if(waserror()) {
+		qunlock(&sdio);
+		nexterror();
+	}
 
-		p = seprint(p, e, "st:       ");
-		p = statusstr(p, e, r->st);
-		p = seprint(p, e, "\nest:      ");
-		p = errstatusstr(p, e, r->est);
-		p = seprint(p, e, "\nacmd12st: ");
-		p = acmd12ststr(p, e, r->acmd12st);
+	sdioinit0();
 
-		p = seprint(p, e, "\nstena:    ");
-		p = statusstr(p, e, r->stena);
-		p = seprint(p, e, "\nestena:   ");
-		p = errstatusstr(p, e, r->estena);
-
-		p = seprint(p, e, "\nstirq:    ");
-		p = statusstr(p, e, r->stirq);
-		p = seprint(p, e, "\nestirq:   ");
-		p = errstatusstr(p, e, r->estirq);
-
-		p = seprint(p, e, "\nhoststate %#lux\n", r->hoststate);
-		USED(p);
-
-		n = readstr(offset, a, n, buf);
-		free(buf);
-*/
+	poperror();
+	qunlock(&sdio);
+}
 
 static long
 sdiorctl(Store *d, void *a, long n, vlong off)
@@ -807,13 +799,13 @@ sdiorctl(Store *d, void *a, long n, vlong off)
 
 	USED(d);
 
-	qlock(&sdl);
+	qlock(&sdio);
 	if(waserror()) {
-		qunlock(&sdl);
+		qunlock(&sdio);
 		nexterror();
 	}
 
-	if(card.valid == 0)
+	if(sdio.card.valid == 0)
 		error(Enocard);
 
 	buf = smalloc(READSTR);
@@ -824,9 +816,12 @@ sdiorctl(Store *d, void *a, long n, vlong off)
 
 	p = buf;
 	e = buf+READSTR;
-	p = cardstr(p, e, &card);
-	p = cidstr(p, e, &card.cid);
-	p = csdstr(p, e, &card.csd);
+	p = seprint(p, e, "debug %d\n", debug);
+	p = cardstr(p, e, &sdio.card);
+	p = seprint(p, e, "cid:\n");
+	p = cidstr(p, e, &sdio.card.cid);
+	p = seprint(p, e, "csd:\n");
+	p = csdstr(p, e, &sdio.card.csd);
 	USED(p);
 	n = readstr(off, a, n, buf);
 
@@ -834,24 +829,47 @@ sdiorctl(Store *d, void *a, long n, vlong off)
 	free(buf);
 
 	poperror();
-	qunlock(&sdl);
+	qunlock(&sdio);
 
 	return n;
 }
 
+enum {
+	CMdebug, CMpreerase,
+};
+static Cmdtab sdioctl[] = {
+	CMdebug,	"debug",	2,
+	CMpreerase,	"preerase",	2,
+};
 static long
-sdiowctl(Store *d, void *s, long n)
+sdiowctl(Store *d, void *a, long n)
 {
-	USED(d, s, n);
-	print("sdiowctl\n");
-	return -1;
-}
+	Cmdbuf *cb;
+	Cmdtab *ct;
 
-static long
-sdioio(void *dd, int iswrite, void *buf, long n, vlong off)
-{
-	USED(dd);
-	return sdio(buf, n, off, iswrite);
+	USED(d);
+
+	cb = parsecmd(a, n);
+	if(waserror()) {
+		free(cb);
+		nexterror();
+	}
+
+	ct = lookupcmd(cb, sdioctl, nelem(sdioctl));
+	switch(ct->index) {
+	case CMdebug:
+		debug = atoi(cb->f[1]);
+		break;
+	case CMpreerase:
+		qlock(&sdio);
+		sdio.preerase = atoi(cb->f[1]);
+		qunlock(&sdio);
+	}
+
+	poperror();
+	free(cb);
+
+	return n;
 }
 
 static void
@@ -859,11 +877,21 @@ sdiodevinit(Store *d)
 {
 	Cid *c;
 
+	qlock(&sdio);
+	if(waserror()) {
+		qunlock(&sdio);
+		nexterror();
+	}
+
+	sdioinit0();
 	sdinit();
-	d->size = card.size;
-	c = &card.cid;
+	d->size = sdio.card.size;
+	c = &sdio.card.cid;
 	d->descr = smprint("product %q, serial %#lux, rev %#lux, %d-%d, sdhc %d",
-		c->prodname, c->serial, c->rev, c->year, c->mon, card.sdhc);
+		c->prodname, c->serial, c->rev, c->year, c->mon, sdio.card.sdhc);
+
+	qunlock(&sdio);
+	poperror();
 }
 
 
@@ -880,7 +908,6 @@ static Store sdiodisk = {
 void
 kwsdiolink(void)
 {
-	print("kwsdiolink\n");
 	sdioreset();
 	sdiodisk.num = 2;
 	blockstoreadd(&sdiodisk);

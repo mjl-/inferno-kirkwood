@@ -121,9 +121,10 @@ root
 	/n/kfs
 
 	/dis/bind.dis
-	/dis/calc.dis
 	/dis/cat.dis
 	/dis/cd.dis
+	/dis/cmp.dis
+	/dis/cp.dis
 	/dis/date.dis
 	/dis/dd.dis
 	/dis/dial.dis
@@ -164,6 +165,11 @@ root
 	/dis/zeros.dis
 
 	/dis/disk/kfs.dis
+	/dis/disk/fdisk.dis
+	/dis/disk/prep.dis
+	/dis/disk/mbr.dis
+	/dis/disk/pedit.dis
+	/dis/disk/calc.tab.dis
 	/dis/sh/std.dis
 
 	/dis/ip/dhcp.dis
@@ -180,6 +186,7 @@ root
 	/dis/lib/dhcpclient.dis
 	/dis/lib/dial.dis
 	/dis/lib/dis.dis
+	/dis/lib/disks.dis
 	/dis/lib/encoding/base64.dis
 	/dis/lib/env.dis
 	/dis/lib/factotum.dis
