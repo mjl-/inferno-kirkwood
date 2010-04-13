@@ -71,18 +71,18 @@ options(void)
 	ulong size;
 	ulong tag;
 	char *k, *v, *next;
-	int end;
 
 	e = p+Atagmax;
 	for(;;) {
-		size = *p++;
-		tag = *p++;
+		if(p+1 >= e)
+			return; /* no options, bad luck */
+		tag = p[1];
 		if(tag == Atagcore) {
-			p += size-2;
+			size = p[0];
+			p += size;
 			break;
 		}
-		if(p >= e)
-			return; /* no options, bad luck */
+		p++;
 	}
 
 	/* just past atagcore */
@@ -93,15 +93,18 @@ options(void)
 			return;
 		if(tag == Atagcmdline) {
 			k = (char*)p;
-			while(*k != 0) {
+			while(k && *k != 0) {
 				v = strchr(k, '=');
-				*v = 0;
-				next = strchr(++v, ' ');
-				end = *next == 0;
-				*next = 0;
+				if(v == nil) {
+					addconf(strdup(k), nil);
+					break;
+				}
+				*v++ = 0;
+				next = strchr(v, ' ');
+				if(next != nil)
+					*next++ = 0;
 				addconf(strdup(k), strdup(v));
-				if(!end)
-					k = next+1;
+				k = next;
 			}
 			return;
 		}
