@@ -123,10 +123,10 @@ static struct {
 	Rendez;
 } xor = {
 	{
-		{AddrXore0p0,	AddrXore0},
-		{AddrXore0p1,	AddrXore0},
-		{AddrXore1p0,	AddrXore1},
-		{AddrXore1p1,	AddrXore1},
+		{XORE0P0REG,	XORE0REG},
+		{XORE0P1REG,	XORE0REG},
+		{XORE1P0REG,	XORE1REG},
+		{XORE1P1REG,	XORE1REG},
 	}
 };
 
