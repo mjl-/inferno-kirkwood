@@ -4,17 +4,18 @@ kirkwood has two ports, on the sheevaplug only the second port is in use.
 for now we'll assume ncq "first party dma" read/write commands (very old sata disks won't work).
 
 todo:
+- properly wait until device is no longer busy during startup
 - proper locking, wait for free edma slot.
 - look at cache flushes around dma
 - error handling & propagating to caller.
-- phy errata
 - better detect ata support of drives
 - interrupt coalescing
 - fix ncq, return early responses (in different order than request queue)
 - general ata commands
 - use generic sd interface (#S;  we need partitions)
-- hotplug
-- abstract for multiple ports
+- hotplug, at least handle disconnects
+- abstract for multiple ports (add controller struct to functions)
+- in satainit(), only start the disk init, don't wait for it to be ready?  faster booting, seems it takes controller/disk some time to init after reset.
 - support for non-ncq drives, by normal dma commands?
 - for large i/o requests, could have always two ops scheduled: less waiting, still no hogging.
  */
@@ -28,7 +29,9 @@ todo:
 
 #include	"io.h"
 
-#define diprint	if(0)iprint
+static int satadebug = 1;
+#define diprint	if(satadebug)iprint
+#define dprint	if(satadebug)print
 
 char Enodisk[] = "no disk";
 
@@ -120,7 +123,7 @@ enum {
 
 	/* edma command */
 	EdmaEnable	= 1<<0,		/* enable edma */
-	EdmaDisable	= 1<<1,		/* abort and disable edma */
+	EdmaAbort	= 1<<1,		/* abort and disable edma */
 	Atareset	= 1<<2,		/* reset sata transport, link, physical layers */
 	EdmaFreeze	= 1<<4,		/* do not process new requests from queue */
 
@@ -184,8 +187,8 @@ enum {
 	CSPDgen2	= 2<<4,		/* <= gen2 */
 	CIPMmask	= 0xf<<8,
 	CIPMany		= 0<<8,		/* no interface power management state restrictions */
-	CIPMpartial	= 1<<8,		/* no transition to PARTIAL */
-	CIPMslumber	= 1<<9,		/* no transition to SLUMBER */
+	CIPMnopartial	= 1<<8,		/* no transition to PARTIAL */
+	CIPMnoslumber	= 1<<9,		/* no transition to SLUMBER */
 	CSPMmask	= 0xf<<12,
 	CSPMnone	= 0<<12,	/* no different state for select power management */
 	CSPMpartial	= 1<<12,	/* to PARTIAL */
@@ -232,7 +235,7 @@ sataintr(Ureg*, void*)
 	v = hr->intrmain;
 	diprint("intr %#lux, main %#lux\n", hr->intr, v);
 	if(v & Sata1err) {
-		diprint("intre %#lux\n", sr->intre);
+		diprint("intre %#lux\n", sr->edma.intre);
 		diprint("m 1err\n");
 	}
 	if(v & Sata1done) {
@@ -241,17 +244,17 @@ sataintr(Ureg*, void*)
 	if(v & Sata1dmadone) {
 		diprint("m 1dmadone\n");
 	}
-	hr->intr = 0; // clear
-	sr->intre = 0; // clear
+	hr->intr = 0;
+	sr->edma.intre = 0;
 
-	if(sr->ncqdone)
-		iprint("ncqdone %#lux\n", sr->ncqdone);
-	diprint("ncqdone %#lux\n", sr->ncqdone);
-	diprint("reqin %#lux reqout %#lux respin %#lux respout %#lux\n", sr->reqin, sr->reqout, sr->respin, sr->respout);
+	if(sr->edma.ncqdone)
+		iprint("ncqdone %#lux\n", sr->edma.ncqdone);
+	diprint("ncqdone %#lux\n", sr->edma.ncqdone);
+	diprint("reqin %#lux reqout %#lux respin %#lux respout %#lux\n", sr->edma.reqin, sr->edma.reqout, sr->edma.respin, sr->edma.respout);
 
 	dcinv(resps, 32*sizeof resps[0]);
-	in = (sr->respin & MASK(8))/sizeof (Resp);
-	out = (sr->respout & MASK(8))/sizeof (Resp);
+	in = (sr->edma.respin & MASK(8))/sizeof (Resp);
+	out = (sr->edma.respout & MASK(8))/sizeof (Resp);
 	for(;;) {
 		if(in == out)
 			break;
@@ -265,13 +268,7 @@ sataintr(Ureg*, void*)
 		/* xxx check for error */
 		wakeup(&reqsr[out]);
 		out = (out+1)%32;
-		sr->respout = (ulong)&resps[out];
-	}
-
-	/* xxx testing */
-	if(count++ >= 100) {
-		intrdisable(Irqlo, IRQ0sata, sataintr, nil, "sata1");
-		diprint("no more intr for now\n");
+		sr->edma.respout = (ulong)&resps[out];
 	}
 
 	intrclear(Irqlo, IRQ0sata);
@@ -318,16 +315,10 @@ atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, ucha
 
 	/* xxx sleep until edma is disabled or edma is idle (edma status, bit 7 (EDMAIdle).  then disable edma. */
 
-	hr->intrmainmask &= ~(Sata1err|Sata1done|Sata1dmadone);
+	/* xxx don't blindly reset registers later */
+	hr->intrmainena &= ~(Sata1err|Sata1done|Sata1dmadone);
 
-	/* xxx should do this once?  or not at all? */
-	sr->ifccfg |= Ignorebsy;
-	sr->fiscfg = 0;
-	sr->fisintr = ~0;
-	sr->fisintrmask = 0;
-
-	//print("pio, status %#lux\n", a->status);
-	//a->ctl = 1<<1;
+	diprint("pio, status %#lux\n", a->status);
 	a->feat = feat;
 	a->sectors = sectors;
 	a->lbalow = (lba>>0) & 0xff;
@@ -337,13 +328,13 @@ atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, ucha
 	a->cmd = cmd;
 	delay(100);
 	v = a->status;
-if(0) {
-	print("result, status %#lux\n", v);
-	if(v & Aerr)	print("  err\n");
-	if(v & Adrq)	print("  drq\n");
-	if(v & Adf)	print("  df\n");
-	if(v & Adrdy)	print("  drdy\n");
-	if(v & Absy)	print("  bsy\n");
+if(satadebug) {
+	diprint("result, status %#lux\n", v);
+	if(v & Aerr)	diprint("  err\n");
+	if(v & Adrq)	diprint("  drq\n");
+	if(v & Adf)	diprint("  df\n");
+	if(v & Adrdy)	diprint("  drdy\n");
+	if(v & Absy)	diprint("  bsy\n");
 }
 	/* xxx check for & propagate errors */
 
@@ -358,7 +349,7 @@ if(0) {
 		break;
 	}
 
-	hr->intrmainmask |= Sata1err|Sata1done|Sata1dmadone;
+	hr->intrmainena |= Sata1err|Sata1done|Sata1dmadone;
 	hr->intr = 0;
 	return v;
 }
@@ -392,7 +383,7 @@ identify(void)
 	for(i = 0; i < 512; i++)
 		c += buf[i];
 	if(c != 0) {
-		print("check byte for 'identify device' response invalid\n");
+		dprint("check byte for 'identify device' response invalid\n");
 		return -1;
 	}
 
@@ -409,7 +400,7 @@ identify(void)
 
 	v = g16(buf+83*2);
 	if((v & (1<<10)) == 0) {
-		print("lba48 not supported (word 83 %#lux)\n", v);
+		dprint("lba48 not supported (word 83 %#lux)\n", v);
 		return -1;
 	}
 
@@ -419,13 +410,13 @@ identify(void)
 
 	/* xxx check ncq support, how? */
 
-if(0) {
-	print("model %q\n", disk.model);
-	print("serial %q\n", disk.serial);
-	print("firmware %q\n", disk.firmware);
-	print("sectors %llud\n", disk.sectors);
-	print("size %llud bytes\n", disk.sectors*512);
-	print("size %llud gb\n", disk.sectors*512/(1024*1024*1024));
+if(satadebug) {
+	dprint("model %q\n", disk.model);
+	dprint("serial %q\n", disk.serial);
+	dprint("firmware %q\n", disk.firmware);
+	dprint("sectors %llud\n", disk.sectors);
+	dprint("size %llud bytes\n", disk.sectors*512);
+	dprint("size %llud gb\n", disk.sectors*512/(1024*1024*1024));
 }
 	satadir[Qdata].length = disk.sectors*512;
 	disk.valid = 1;
@@ -440,14 +431,92 @@ flush(void)
 }
 
 static void
+atadump(void)
+{
+	ulong n;
+	char *buf, *p, *e;
+	AtaReg *a = ATA1REG;
+
+	n = 2048;
+	p = buf = smalloc(n);
+	e = p+n;
+
+	p = seprint(p, e, "ata:\n");
+	p = seprint(p, e, " data       %04lux\n", a->data);
+	p = seprint(p, e, " feat/error %02lux\n", a->feat);
+	p = seprint(p, e, " sectors    %02lux\n", a->sectors);
+	p = seprint(p, e, " lbalow     %02lux\n", a->lbalow);
+	p = seprint(p, e, " lbamid     %02lux\n", a->lbamid);
+	p = seprint(p, e, " lbahigh    %02lux\n", a->lbahigh);
+	p = seprint(p, e, " dev        %02lux\n", a->dev);
+	p = seprint(p, e, " cmd/status %02lux\n", a->cmd);
+	p = seprint(p, e, " ctl        %02lux\n", a->ctl);
+	USED(p);
+
+	dprint("%s", buf);
+
+	free(buf);
+}
+
+
+static void
 satareset(void)
 {
+	SatahcReg *hr = SATAHCREG;
+	SataReg *sr = SATA1REG;
+
 	/* power up sata1 port */
 	CPUCSREG->mempm &= ~Sata1mem;
 	CPUCSREG->clockgate |= Sata1clock;
 	regreadl(&CPUCSREG->clockgate);
 
-	SATA1REG->ifccfg &= ~(1<<9);
+	/* disable interrupts */
+	hr->intrmainena = 0;
+	sr->edma.intreena = 0;
+	sr->ifc.serrintrena = 0;
+	sr->ifc.fisintrena = 0;
+
+	/* clear interrupts */
+	sr->edma.intre = 0;
+	/* xxx more */
+
+	/* disable & abort edma, bdma */
+	sr->edma.cmd = (sr->edma.cmd & ~EdmaEnable) | EdmaAbort;
+
+	/* xxx should set full register? */
+	sr->ifc.ifccfg &= ~Physhutdown;
+
+	/* xxx reset more registers */
+	hr->cfg = (0xff<<0)		/* default mbus arbiter timeout value */
+			| (1<<8)	/* no dma byte swap */
+			| (1<<9)	/* no edma byte swap */
+			| (1<<10)	/* no prdp byte swap */
+			| (1<<16);	/* mbus arbiter timer disabled */
+	hr->intrcoalesc = 0; /* raise interrupt after 0 completions (disable coalescing) */
+	hr->intrtime = 0; /* number of clocks before asserting interrupt (disable coalescing) */
+	hr->intr = 0;  /* clear */
+
+/* xxx should set windows correct too */
+if(0) {
+	hr->win[0].ctl = (1<<0)		/* enable window */
+			| (0<<1)	/* mbus write burst limit.  0: no limit (max 128 bytes), 1: do not cross 32 byte boundary */
+			| ((0 & 0x0f)<<4)	/* target */
+			| ((0xe & 0xff)<<8)	/* target attributes */
+			| ((0xfff & 0xffff)<<16);	/* size of window, number+1 64kb units */
+	hr->win[0].base = 0x0 & 0xffff;
+}
+
+	reqs = xspanalloc(32*sizeof reqs[0], 32*sizeof reqs[0], 0);
+	resps = xspanalloc(32*sizeof resps[0], 32*sizeof resps[0], 0);
+	prds = xspanalloc(32*8*sizeof prds[0], 16, 0);
+	if(reqs == nil || resps == nil || prds == nil)
+		panic("satareset");
+	memset(reqs, 0, 32*sizeof reqs[0]);
+	memset(resps, 0, 32*sizeof resps[0]);
+	memset(prds, 0, 32*8*sizeof prds[0]);
+	reqnext = respnext = 0;
+
+	intrenable(Irqlo, IRQ0sata, sataintr, nil, "sata");
 }
 
 static void
@@ -455,49 +524,93 @@ satainit(void)
 {
 	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
+	int n;
 
-	/* xxx should enable phy too, perhaps reset, and do the phy errata dance */
+	diprint("satainit...\n");
 
-	if((sr->sstatus & SDETmask) != SDETdevphy) {
-		print("no sata disk attached, skipping satainit\n");
-		return;
+	/* disable interrupts */
+	hr->intrmainena = 0;
+	sr->edma.intreena = 0;
+	sr->ifc.serrintrena = 0;
+	sr->ifc.fisintrena = 0;
+
+	/* disable & abort edma */
+	sr->edma.cmd = (sr->edma.cmd & ~EdmaEnable) | EdmaAbort;
+
+	/* clear edma */
+	sr->edma.reqbasehi = sr->edma.respbasehi = 0;
+	sr->edma.reqin = 0;
+	sr->edma.reqout = 0;
+	sr->edma.respin = 0;
+	sr->edma.respout = (ulong)&resps[0];
+
+	diprint("satainit, reqin %#lux, reqout %#lux\n", sr->edma.reqin, sr->edma.reqout);
+
+if(0) {
+	dprint("ata before reset\n");
+	atadump();
+}
+
+	dprint("sr->ifc.sstatus before edma reset %#lux\n", sr->ifc.sstatus);
+
+	sr->edma.cmd |= Atareset;
+	delay(1);
+	sr->edma.cmd &= ~Atareset;
+	delay(200);
+
+	/* errata magic, to fix the phy.  see uboot code (no docs available).  */
+	sr->ifc.phym3 = (sr->ifc.phym3 & ~0x78100000) | 0x28000000;
+	sr->ifc.phym4 = (sr->ifc.phym4 & ~1) | (1<<16);
+	sr->ifc.phym9g2 = (sr->ifc.phym9g2 & ~0x400f) | 0x00008; /* tx driver amplitude */
+	sr->ifc.phym9g1 = (sr->ifc.phym9g1 & ~0x400f) | 0x00008; /* tx driver amplitude */
+	delay(100);  /* needed? */
+
+	diprint("before phy init, sstatus %#lux, serror %#lux\n", sr->ifc.sstatus, sr->ifc.serror);
+
+	sr->ifc.scontrol = CDETcomm|CSPDany|CIPMnopartial|CIPMnoslumber;
+	regreadl(&sr->ifc.scontrol);
+	delay(1);
+	dprint("sr->ifc.sstatus after phy reset %#lux\n", sr->ifc.sstatus);
+
+	sr->ifc.scontrol &= ~CDETcomm;
+	regreadl(&sr->ifc.scontrol);
+	microdelay(20*1000);
+
+	/* check phy status */
+	n = 0;
+	while((sr->ifc.sstatus & SDETmask) != SDETdevphy) {
+		if(n++ > 200) {
+			dprint("no sata disk attached (sstatus %#lux; serror %#lux), aborting sata init\n", sr->ifc.sstatus, sr->ifc.serror);
+			return;
+		}
+		delay(1);
 	}
 
-	SATAHCREG->intrmainmask &= ~(1<<8); // no interrupt coalescing for now
+	diprint("after phy init, have connection, sstatus %#lux, serror %#lux\n", sr->ifc.sstatus, sr->ifc.serror);
 
-	reqs = xspanalloc(32*sizeof reqs[0], 32*sizeof reqs[0], 0);
-	resps = xspanalloc(32*sizeof resps[0], 32*sizeof resps[0], 0);
-	prds = xspanalloc(32*8*sizeof prds[0], 16, 0);
-	if(reqs == nil || resps == nil || prds == nil)
-		panic("satainit");
-	memset(reqs, 0, 32*sizeof reqs[0]);
-	memset(resps, 0, 32*sizeof resps[0]);
-	memset(prds, 0, 32*8*sizeof prds[0]);
-	reqnext = respnext = 0;
+	sr->ifc.ifccfg &= ~Ignorebsy;
 
-	sr->reqbasehi = sr->respbasehi = 0;
-	sr->reqin = 0;
-	sr->reqout = 0;
-	sr->respin = 0;
-	sr->respout = (ulong)&resps[0];
+if(0) {
+	tsleep(&up->sleep, return0, nil, 500);
+	dprint("ata after real reset\n");
+	atadump();
+}
 
-	diprint("satainit, reqin %#lux, reqout %#lux\n", sr->reqin, sr->reqout);
+	dprint("sr->ifc.sstatus before ata identify %#lux\n", sr->ifc.sstatus);
 
+	/* xxx horrible, should properly wait during command execution, until device no longer busy */
+	tsleep(&up->sleep, return0, nil, 1000);
 	if(identify() < 0) {
-		print("no disk\n");
+		dprint("no disk\n");
 		return;
 	}
-	print("#S/sd01: %q, %lludGB (%,llud bytes), sata-i%s\n", disk.model, disk.sectors*512/(1024*1024*1024), disk.sectors*512, (SATA1REG->sstatus & SSPDgen2) ? "i" : "");
+	dprint("#S/sd01: %q, %lludGB (%,llud bytes), sata-i%s\n", disk.model, disk.sectors*512/(1024*1024*1024), disk.sectors*512, (SATA1REG->ifc.sstatus & SSPDgen2) ? "i" : "");
 
-	hr->intrmainmask = Sata1err|Sata1done|Sata1dmadone;
-	hr->intr = 0; // clear
-	sr->intre = 0; // clear
+	hr->intrmainena = Sata1err|Sata1done|Sata1dmadone;
+	hr->intr = 0;
+	sr->edma.intre = 0;
 
-	diprint("satainit, before edma, hr->intr %#lux, hr->intrmain %#lux, sr->intre %#lux\n", hr->intr, hr->intrmain, sr->intre);
-
-	/* set interrupts */
-	intrenable(Irqlo, IRQ0sata, sataintr, nil, "sata1");
-
+	diprint("satainit, before edma, hr->intr %#lux, hr->intrmain %#lux, sr->edma.intre %#lux\n", hr->intr, hr->intrmain, sr->edma.intre);
 }
 
 static char *dets[] = {"none", "dev", nil, "devphy", "nophy"};
@@ -533,6 +646,7 @@ satadump(char *dst, long n, vlong off)
 	AtaReg *a = ATA1REG;
 	ulong v;
 	int i;
+	ulong *w;
 
 	USED(a);
 
@@ -551,7 +665,7 @@ satadump(char *dst, long n, vlong off)
 	p = seprint(p, e, "\n");
 
 	v = hr->intrmain;
-	p = seprint(p, e, "hc intrmain %#lux, mask %#lux\n", v, hr->intrmainmask);
+	p = seprint(p, e, "hc intrmain %#lux, ena %#lux\n", v, hr->intrmainena);
 	if(v & Sata1err) p = seprint(p, e, "  sata1err");
 	if(v & Sata1done) p = seprint(p, e, "  sata1done");
 	if(v & Sata1dmadone) p = seprint(p, e, "  sata1dmadone");
@@ -560,9 +674,9 @@ satadump(char *dst, long n, vlong off)
 	if(v) p = seprint(p, e, "  other: %#lux", v);
 	p = seprint(p, e, "\n");
 
-	p = seprint(p, e, "ncqdone   %#lux\n", sr->ncqdone);
+	p = seprint(p, e, "ncqdone   %#lux\n", sr->edma.ncqdone);
 
-	v = sr->ifccfg;
+	v = sr->ifc.ifccfg;
 	p = seprint(p, e, "ifccfg    %#lux\n", v);
 	if(v & SSC) p = seprint(p, e, " ssc");
 	if(v & Gen2) p = seprint(p, e, " gen2en");
@@ -573,14 +687,14 @@ satadump(char *dst, long n, vlong off)
 	if(v & Emphpre) p = seprint(p, e, " emphpre");
 	p = seprint(p, e, "\n");
 
-	v = sr->cfg;
+	v = sr->edma.cfg;
 	p = seprint(p, e, "cfg       %#lux", v);
 	if(v & ECFGncq) p = seprint(p, e, " (ncq)");
 	if(v & ECFGqueue) p = seprint(p, e, " (queued)");
 	p = seprint(p, e, "\n");
 
-	v = sr->intre;
-	p = seprint(p, e, "intre     %#lux, mask %#lux\n", v, sr->intremask);
+	v = sr->edma.intre;
+	p = seprint(p, e, "intre     %#lux, enabled %#lux\n", v, sr->edma.intreena);
 	if(v) {
 		if(v & Edeverr) p = seprint(p, e, " deverr");
 		if(v & Edevdis) p = seprint(p, e, " devdis");
@@ -588,23 +702,23 @@ satadump(char *dst, long n, vlong off)
 		if(v & Eserror) p = seprint(p, e, " serror");
 		if(v & Eselfdis) p = seprint(p, e, " selfdis");
 		if(v & Etransint) p = seprint(p, e, " transint");
-		if(v & Eiordy) p = seprint(p, e, " iodry");
+		if(v & Eiordy) p = seprint(p, e, " iordy");
 		if(v & (1<<31)) p = seprint(p, e, " transerr");
 		p = seprint(p, e, " rx %#lux %#lux, tx %#lux %#lux", (v>>13)&0xf, (v>>17)&0xf, (v>>21)&0xf, (v>>26)&0xf);
 		p = seprint(p, e, "\n");
 	}
 
-	v = sr->cmd;
+	v = sr->edma.cmd;
 	p = seprint(p, e, "cmd       %#lux\n", v);
 	if(v & EdmaEnable) p = seprint(p, e, " edma enable\n");
 
-	v = sr->status;
+	v = sr->edma.status;
 	p = seprint(p, e, "status    %#lux\n", v);
 
-	p = seprint(p, e, "req       %#lux %#lux\n", sr->reqin, sr->reqout);
-	p = seprint(p, e, "resp      %#lux %#lux\n", sr->respin, sr->respout);
+	p = seprint(p, e, "req       %#lux %#lux\n", sr->edma.reqin, sr->edma.reqout);
+	p = seprint(p, e, "resp      %#lux %#lux\n", sr->edma.respin, sr->edma.respout);
 
-	v = sr->sstatus;
+	v = sr->ifc.sstatus;
 	p = seprint(p, e, "sstatus   %#lux\n", v);
 	s = "unknown";
 	switch(v&0xf) {
@@ -622,18 +736,18 @@ satadump(char *dst, long n, vlong off)
 	if(v & SSPDgen2) p = seprint(p, e, " gen2");
 	p = seprint(p, e, "  ipm: %#lux\n", (v>>8)&0xf);
 
-	v = sr->serror;
+	v = sr->ifc.serror;
 	p = seprint(p, e, "serror    %#lux  ", v);
 	for(i = 0; i < nelem(serrors); i++)
 		if(v & serrors[i].v)
 			p = seprint(p, e, "%s", serrors[i].s);
 	p = seprint(p, e, "\n");
 
-	p = seprint(p, e, "scontrol  %#lux\n", sr->scontrol);
+	p = seprint(p, e, "scontrol  %#lux\n", sr->ifc.scontrol);
 	
-	p = seprint(p, e, "ifcctl     %#lux\n", sr->ifcctl);
-	p = seprint(p, e, "ifctestctl %#lux\n", sr->ifctestctl);
-	v = sr->ifcstatus;
+	p = seprint(p, e, "ifcctl     %#lux\n", sr->ifc.ifcctl);
+	p = seprint(p, e, "ifctestctl %#lux\n", sr->ifc.ifctestctl);
+	v = sr->ifc.ifcstatus;
 	p = seprint(p, e, "ifcstatus  %#lux\n", v);
 	p = seprint(p, e, "  fistype  %#lux, pmrx %#lux, transfsm %#lux\n", v&0xff, (v>>8)&0xf, (v>>24)&0xf);
 	if(v & (1<<12)) p = seprint(p, e, "  vendoruqdn");
@@ -652,31 +766,32 @@ satadump(char *dst, long n, vlong off)
 	if(v & (1<<31)) p = seprint(p, e, "  N");
 	p = seprint(p, e, "\n");
 
-	p = seprint(p, e, "fiscfg   %#lux\n", sr->fiscfg);
-	p = seprint(p, e, "fisintr  %#lux, mask %#lux\n", sr->fisintr, sr->fisintrmask);
-	p = seprint(p, e, "fis[7]   %#lux %#lux %#lux %#lux %#lux %#lux %#lux\n", sr->fis[0], sr->fis[1], sr->fis[2], sr->fis[3], sr->fis[4], sr->fis[5], sr->fis[6]);
+	p = seprint(p, e, "fiscfg   %#lux\n", sr->ifc.fiscfg);
+	p = seprint(p, e, "fisintr  %#lux, ena %#lux\n", sr->ifc.fisintr, sr->ifc.fisintrena);
+	w = sr->ifc.fis;
+	p = seprint(p, e, "fis[7]   %#lux %#lux %#lux %#lux %#lux %#lux %#lux\n",
+		w[0], w[1], w[2], w[3], w[4], w[5], w[6]);
 
 if(0) {
-	p = seprint(p, e, "pll      0x%08lux\n", sr->pllcfg);
-	p = seprint(p, e, "ltmode   0x%08lux\n", sr->ltmode);
-	p = seprint(p, e, "phym3    0x%08lux\n", sr->phym3);
-	p = seprint(p, e, "phym4    0x%08lux\n", sr->phym4);
-	p = seprint(p, e, "phym1    0x%08lux\n", sr->phym1);
-	p = seprint(p, e, "phym2    0x%08lux\n", sr->phym2);
-	p = seprint(p, e, "bistctl  0x%08lux\n", sr->bistctl);
-	p = seprint(p, e, "bist1    0x%08lux\n", sr->bist1);
-	p = seprint(p, e, "bist2    0x%08lux\n", sr->bist2);
-	p = seprint(p, e, "vendor   0x%08lux\n", sr->vendor);
-	p = seprint(p, e, "phym9g2  0x%08lux\n", sr->phym9g2);
-	p = seprint(p, e, "phym9g1  0x%08lux\n", sr->phym9g1);
-	p = seprint(p, e, "phycfg   0x%08lux\n", sr->phycfg);
-	p = seprint(p, e, "phytctl  0x%08lux\n", sr->phytctl);
-	p = seprint(p, e, "phym10   0x%08lux\n", sr->phym10);
-	p = seprint(p, e, "phym12   0x%08lux\n", sr->phym12);
+	p = seprint(p, e, "pll      0x%08lux\n", sr->ifc.pllcfg);
+	p = seprint(p, e, "ltmode   0x%08lux\n", sr->ifc.ltmode);
+	p = seprint(p, e, "phym3    0x%08lux\n", sr->ifc.phym3);
+	p = seprint(p, e, "phym4    0x%08lux\n", sr->ifc.phym4);
+	p = seprint(p, e, "phym1    0x%08lux\n", sr->ifc.phym1);
+	p = seprint(p, e, "phym2    0x%08lux\n", sr->ifc.phym2);
+	p = seprint(p, e, "bistctl  0x%08lux\n", sr->ifc.bistctl);
+	p = seprint(p, e, "bist1    0x%08lux\n", sr->ifc.bist1);
+	p = seprint(p, e, "bist2    0x%08lux\n", sr->ifc.bist2);
+	p = seprint(p, e, "vendor   0x%08lux\n", sr->ifc.vendor);
+	p = seprint(p, e, "phym9g2  0x%08lux\n", sr->ifc.phym9g2);
+	p = seprint(p, e, "phym9g1  0x%08lux\n", sr->ifc.phym9g1);
+	p = seprint(p, e, "phycfg   0x%08lux\n", sr->ifc.phycfg);
+	p = seprint(p, e, "phytctl  0x%08lux\n", sr->ifc.phytctl);
+	p = seprint(p, e, "phym10   0x%08lux\n", sr->ifc.phym10);
+	p = seprint(p, e, "phym12   0x%08lux\n", sr->ifc.phym12);
 }
 
-
-if(0) {
+if(1) {
 	p = seprint(p, e, "ata:\n");
 	p = seprint(p, e, " data       %04lux\n", a->data);
 	p = seprint(p, e, " feat/error %02lux\n", a->feat);
@@ -758,7 +873,7 @@ io(int t, void *buf, long nb, vlong off)
 	if(nb % 512 != 0)
 		error(Ebadarg);
 	if((ulong)buf & 1)
-		error(Ebadarg); // fix, should alloc buffer and copy it afterwards?
+		error(Ebadarg); /* fix, should alloc buffer and copy it afterwards? */
 
 	if(lba == disk.sectors)
 		return 0;
@@ -797,22 +912,22 @@ io(int t, void *buf, long nb, vlong off)
 	nslo = ns&0xff;
 	nshi = (ns>>8)&0xff;
 	dev = 1<<6;
-	rq->ata[0] = (cmds[t]<<16)|(nslo<<24); // cmd, feat current
-	rq->ata[1] = (lbalo<<0)|(dev<<24); // 24 bit lba current, dev
-	rq->ata[2] = (lbahi<<0)|(nshi<<24); // 24 bit lba previous, feat ext/previous
-	rq->ata[3] = ((i<<3)<<0)|(0<<8); // sectors current (tag), previous
+	rq->ata[0] = (cmds[t]<<16)|(nslo<<24); /* cmd, feat current */
+	rq->ata[1] = (lbalo<<0)|(dev<<24); /* 24 bit lba current, dev */
+	rq->ata[2] = (lbahi<<0)|(nshi<<24); /* 24 bit lba previous, feat ext/previous */
+	rq->ata[3] = ((i<<3)<<0)|(0<<8); /* sectors current (tag), previous */
 	dcwbinv(rq, sizeof rq[0]);
-	sr->fiscfg = (1<<6)-1;
-	sr->fisintr = ~0;
-	sr->fisintrmask = 0;
+	sr->ifc.fiscfg = (1<<6)-1;
+	sr->ifc.fisintr = ~0;
+	sr->ifc.fisintrena = 0;
 
 diprint("io, using slot %d, off %llud\n", i, off);
 	v = 1<<i;
 	satadone &= ~v;
-	sr->reqin = (ulong)&reqs[reqnext];
-	if((sr->cmd & EdmaEnable) == 0) {
-		sr->cfg |= ECFGncq|0x1f; // 0x1f for queue depth?
-		sr->cmd = EdmaEnable;
+	sr->edma.reqin = (ulong)&reqs[reqnext];
+	if((sr->edma.cmd & EdmaEnable) == 0) {
+		sr->edma.cfg |= ECFGncq|0x1f; /* 0x1f for queue depth? */
+		sr->edma.cmd = EdmaEnable;
 	}
 	qunlock(&reqsl);
 
@@ -826,13 +941,25 @@ static long
 ctl(char *buf, long n)
 {
 	Cmdbuf *cb;
-	SataReg *sr = SATA1REG;
 
 	cb = parsecmd(buf, n);
+	if(strcmp(cb->f[0], "debug") == 0) {
+		if(cb->nf != 2)
+			error(Ebadarg);
+		satadebug = atoi(cb->f[1]);
+		return n;
+	}
 	if(strcmp(cb->f[0], "reset") == 0) {
-		sr->cmd = Atareset;
-		sr->cmd &= ~Atareset;
-		/* xxx much more */
+		if(cb->nf != 1)
+			error(Ebadarg);
+		satainit();
+		return n;
+	}
+	if(strcmp(cb->f[0], "identify") == 0) {
+		if(identify() < 0) {
+			error("no disk");
+		}
+		dprint("#S/sd01: %q, %lludGB (%,llud bytes), sata-i%s\n", disk.model, disk.sectors*512/(1024*1024*1024), disk.sectors*512, (SATA1REG->ifc.sstatus & SSPDgen2) ? "i" : "");
 		return n;
 	}
 	error("bad ctl");
@@ -913,9 +1040,9 @@ sataread(Chan *c, void *buf, long n, vlong off)
 		free(s);
 		return n;
 	case Qdata:
-print("dcwbinv0 %ld\n", n);
+diprint("dcwbinv0 %ld\n", n);
 		dcwbinv(buf, n);
-print("dcwbinv1 %ld\n", n);
+diprint("dcwbinv1 %ld\n", n);
 		r = 0;
 		while(r < n) {
 			nn = io(Read, (uchar*)buf+r, n-r, off+r);
@@ -938,7 +1065,7 @@ satawrite(Chan *c, void *buf, long n, vlong off)
 
 	switch((ulong)c->qid.path){
 	case Qctl:
-		error(Ebadarg);
+		return ctl(buf, n);
 	case Qdata:
 		dcwbinv(buf, n);
 		r = 0;
@@ -950,7 +1077,7 @@ satawrite(Chan *c, void *buf, long n, vlong off)
 		}
 		return r;
 	case Qtest:
-		return ctl(buf, n);
+		break;
 	}
 	error(Egreg);
 	return 0;		/* not reached */

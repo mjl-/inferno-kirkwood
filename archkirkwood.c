@@ -134,7 +134,7 @@ archreset(void)
  	TIMERREG->ctl &= ~TmrWDenable;
 
 	/* physhutdown first port to save power, sheevaplug esata uses second port. */
-	SATA0REG->ifccfg |= 1<<9;
+	SATA0REG->ifc.ifccfg |= 1<<9;
 	
 	/* configure gpios */
 //	GPIO0REG->dataout = UsbPWOEValLow;

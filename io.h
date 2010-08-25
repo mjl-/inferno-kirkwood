@@ -845,7 +845,7 @@ struct SatahcReg
 	ulong	intr;
 	ulong	_pad0[2];
 	ulong	intrmain;
-	ulong	intrmainmask;
+	ulong	intrmainena;
 	ulong	_pad1;
 	ulong	ledcfg;
 	struct	{
@@ -861,78 +861,76 @@ typedef struct SataReg SataReg;
 struct SataReg
 {
 	/* edma */
-	ulong	cfg;
-	ulong	_pad0;
-	ulong	intre;
-	ulong	intremask;
-	ulong	reqbasehi;
-	ulong	reqin;
-	ulong	reqout;
-	ulong	respbasehi;
-	ulong	respin;
-	ulong	respout;
-	ulong	cmd;
-	ulong	_pad1;
-	ulong	status;
-	ulong	iordytimeout;
-	ulong	_pad2[2];
-	ulong	cmddelaythr;
-	uchar	_pad3[0x50-0x44];
-
-	/* sata interface */
-	ulong	ifccfg;
-	ulong	pllcfg;
-	uchar	_pad4[0x60-0x58];
-
-	/* edma */
-	ulong	haltcond;
-	uchar	_pad5[0x94-0x64];
-	ulong	ncqdone;
-	uchar	_pad6[0x224-0x98];
-
-	/* basic dma */
-	struct {
-		ulong	cmd;
-		ulong	status;
-		ulong	dtlo;
-		ulong	dthi;
-		ulong	drlo;
-		ulong	drhi;
-	} bdma;
-	uchar	_pad7[0x300-0x23c];
-
-	/* sata interface */
-	ulong	sstatus;
-	ulong	serror;
-	ulong	scontrol;
-	ulong	ltmode;
-	ulong	phym3;
-	ulong	phym4;
-	ulong	_pad8[5];
-	ulong	phym1;
-	ulong	phym2;
-	ulong	bistctl;
-	ulong	bist1;
-	ulong	bist2;
-	ulong	serrintrmask;
-	ulong	ifcctl;
-	ulong	ifctestctl;
-	ulong	ifcstatus;
-	ulong	_pad9[3];
-	ulong	vendor;
-	ulong	fiscfg;
-	ulong	fisintr;
-	ulong	fisintrmask;
-	ulong	_pad10;
-	ulong	fis[7];
-	ulong	_pad11[3];
-	ulong	phym9g2;
-	ulong	phym9g1;
-	ulong	phycfg;
-	ulong	phytctl;
-	ulong	phym10;
-	ulong	_pad12;
-	ulong	phym12;
+	union {
+		struct {
+			uchar _pad0[0x224];
+			ulong	cmd;
+			ulong	status;
+			ulong	dtlo;
+			ulong	dthi;
+			ulong	drlo;
+			ulong	drhi;
+		} bdma;
+		struct {
+			ulong	cfg;
+			ulong	_pad0;
+			ulong	intre;
+			ulong	intreena;
+			ulong	reqbasehi;
+			ulong	reqin;
+			ulong	reqout;
+			ulong	respbasehi;
+			ulong	respin;
+			ulong	respout;
+			ulong	cmd;
+			ulong	_pad1;
+			ulong	status;
+			ulong	iordytimeout;
+			ulong	_pad2[2];
+			ulong	cmddelaythr;
+			uchar	_pad3[0x60-0x44];
+			ulong	haltcond;
+			uchar	_pad5[0x94-0x64];
+			ulong	ncqdone;
+		} edma;
+		struct {
+			uchar	_pad0[0x50-0x0];
+			ulong	ifccfg;
+			ulong	pllcfg;
+			uchar	_pad4[0x300-0x58];
+			ulong	sstatus;
+			ulong	serror;
+			ulong	scontrol;
+			ulong	ltmode;
+			ulong	phym3;
+			ulong	phym4;
+			ulong	_pad8[5];
+			ulong	phym1;
+			ulong	phym2;
+			ulong	bistctl;
+			ulong	bist1;
+			ulong	bist2;
+			ulong	serrintrena;
+			ulong	ifcctl;
+			ulong	ifctestctl;
+			ulong	ifcstatus;
+			ulong	_pad9[3];
+			ulong	vendor;
+			ulong	fiscfg;
+			ulong	fisintr;
+			ulong	fisintrena;
+			ulong	_pad10;
+			ulong	fis[7];
+			ulong	_pad11[3];
+			ulong	phym9g2;
+			ulong	phym9g1;
+			ulong	phycfg;
+			ulong	phytctl;
+			ulong	phym10;
+			ulong	_pad12;
+			ulong	phym12;
+		} ifc;
+	};
 };
 
 #define ATA0REG	((AtaReg*)AddrAta0)
