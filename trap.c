@@ -331,13 +331,14 @@ trap(Ureg *ureg)
 		break;
 
 	case PsrMabt:				/* Prefetch abort */
+		iprint("trap:prefetch abort\n");
 		if(catchdbg && catchdbg(ureg, 0))
 			break;
 		/* FALL THROUGH */
 	case PsrMabt+1:			/* Data abort */
-/* xxx we don't do mmu, remove this? */
+		iprint("trap:data abort");
 /*
-	ulong far, fsr;
+		ulong far, fsr;
 		fsr = mmugetfsr();
 		far = mmugetfar();
 		if(fsr & (1<<9)) {
@@ -415,7 +416,7 @@ dumplongs(char *msg, ulong *v, int n)
 void
 _dumpstack(Ureg*)
 {
-	print("dumpstack\n");
+	print("_dumpstack\n");
 }
 
 void
@@ -440,7 +441,6 @@ dumpregs(Ureg* ureg)
 	print("R4  %8.8uX R3  %8.8uX R2  %8.8uX R1  %8.8uX R0  %8.8uX\n",
 		ureg->r4, ureg->r3, ureg->r2, ureg->r1, ureg->r0);
 	print("Stack is at: %8.8luX\n", ureg);
-	print("PC %8.8lux LINK %8.8lux\n", (ulong)ureg->pc, (ulong)ureg->link);
 
 	if(up)
 		print("Process stack:  %8.8lux-%8.8lux\n",
