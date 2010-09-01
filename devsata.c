@@ -4,6 +4,10 @@ kirkwood has two ports, on the sheevaplug only the second port is in use.
 for now we'll assume ncq "first party dma" read/write commands (very old sata disks won't work).
 
 todo:
+- figure out what to do with the tag in the responses from the response queue.  for ncq.
+- read ata/atapi signature in registers after reset?
+- get interrupt when device sends registers.  so we can check for BSY then, or start reading data, etc.
+- detect whether packet command is accepted.  try if packet commands work.
 - properly wait until device is no longer busy during startup
 - proper locking, wait for free edma slot.
 - look at cache flushes around dma
@@ -16,8 +20,7 @@ todo:
 - hotplug, at least handle disconnects
 - abstract for multiple ports (add controller struct to functions)
 - in satainit(), only start the disk init, don't wait for it to be ready?  faster booting, seems it takes controller/disk some time to init after reset.
-- support for non-ncq drives, by normal dma commands?
-- for large i/o requests, could have always two ops scheduled: less waiting, still no hogging.
+- support for non-ncq drives, by normal dma commands?  should support setting iomode: pio dma satancq.  commands should ata for now.  could be atapi-mmc or atapi-scsi too.  not good for this chip because dma with atapi is not supported by the chip and pio is slow.
  */
 
 #include	"u.h"
@@ -87,7 +90,7 @@ struct Disk
 	uvlong	sectors;
 };
 
-static ulong satadone;
+static volatile ulong satadone;
 static QLock reqsl;
 static Rendez reqsr[32];
 static Req *reqs;
@@ -132,7 +135,6 @@ enum {
 	Dev2mem		= 1<<5,		/* direction of command */
 	Cacheempty	= 1<<6,		/* edma cache empty */
 	EdmaIdle	= 1<<7,		/* edma idle (but disk can have command pending) */
-#define IOID(v)	(((v)>>16)&(1<<6)-1)	/* io id of last command */
 
 	/* host controller interrupt */
 	Sata0err	= 1<<0,
@@ -247,9 +249,6 @@ sataintr(Ureg*, void*)
 	hr->intr = 0;
 	sr->edma.intre = 0;
 
-	if(sr->edma.ncqdone)
-		iprint("ncqdone %#lux\n", sr->edma.ncqdone);
-	diprint("ncqdone %#lux\n", sr->edma.ncqdone);
 	diprint("reqin %#lux reqout %#lux respin %#lux respout %#lux\n", sr->edma.reqin, sr->edma.reqout, sr->edma.respin, sr->edma.respout);
 
 	dcinv(resps, 32*sizeof resps[0]);
@@ -259,10 +258,9 @@ sataintr(Ureg*, void*)
 		if(in == out)
 			break;
 		w = resps[in].idflags & MASK(5);
-		if(w != in && 0)
+		if(w != in)
 			iprint("response, in %lud, tag %lud\n", in, w);
-		/* determine which request is done.  maybe from ncqdone.  wakeup its caller. */
-		/* xxx check tag in idflags? */
+		/* determine which request is done, wakeup its caller. */
 		satadone |= 1<<out;
 		diprint("new resp out %lud (in %lud), satadone now %#lux\n", out, in, satadone);
 		/* xxx check for error */
@@ -318,7 +316,7 @@ atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, ucha
 	/* xxx don't blindly reset registers later */
 	hr->intrmainena &= ~(Sata1err|Sata1done|Sata1dmadone);
 
-	diprint("pio, status %#lux\n", a->status);
+	diprint("ata, status %#lux\n", a->status);
 	a->feat = feat;
 	a->sectors = sectors;
 	a->lbalow = (lba>>0) & 0xff;
@@ -368,14 +366,79 @@ strip(char *p)
 	p[j+1-i] = 0;
 }
 
+
+/* output of "identify device", 256 16-bit words. */
+enum {
+	/* some words are only valid when bit 15 is 0 and bit 14 is 1. */
+	Fvalidmask		= 3<<14,
+	Fvalid			= 1<<14,
+
+	/* capabilities.  these should be 1 for sata devices. */
+	Fcaplba			= 1<<9,
+	Fcapdma			= 1<<8,
+
+	/* ata commands supported (word 82), enabled (word 85) */
+	Feat0ServiceIntr	= 1<<8,
+	Feat0Writecache		= 1<<5,
+	Feat0Packet		= 1<<4,
+	Feat0PowerMgmt		= 1<<3,
+	Feat0SMART		= 1<<0,
+
+	/* ata commands supported (word 83), enabled (word 86) */
+	Feat1FlushCachExt	= 1<<13,
+	Feat1FlushCache		= 1<<12,
+	Feat1Addr48		= 1<<10,
+	Feat1AAM		= 1<<9,		/* automatic acoustic management */
+	Feat1SetFeatReq		= 1<<6,
+	Feat1PowerupStandby	= 1<<5,
+	Feat1AdvPowerMgmt	= 1<<3,
+
+	/* ata commands supported (word 84), enabled (word 87) */
+	Feat2WWName64		= 1<<8,
+	Feat2Logging		= 1<<5,
+	Feat2SMARTselftest	= 1<<1,
+	Feat2SMARTerrorlog	= 1<<0,
+
+	/* logical/physical sectors, word 106 */
+	MultiLogicalSectors	= 1<<13,	/* multiple logical sectors per physical sector */
+	LargeLogicalSectors	= 1<<12,	/* logical sector larger than 512 bytes */
+	LogicalPerPhyslog2mask	= (1<<4)-1,
+
+	/* sata capabilities, word 76 */
+	SataCapNCQ		= 1<<8,
+	SataCapGen2		= 1<<2,
+	SataCapGen1		= 1<<1,
+
+	/* nvcache capabilities, word 214 */
+	NvcacheEnabled		= 1<<4,
+	NvcachePMEnabled	= 1<<1,
+	NvcachePMSup		= 1<<0,
+};
+
+
+typedef struct Atadev Atadev;
+struct Atadev {
+	ushort	major;
+	ushort	minor;
+	ushort	cmdset[6];	/* words 83-87.  first three are for "supported", last three for "enabled". */
+	ushort	sectorflags;	/* word 106 */
+	uvlong	wwn;		/* world wide name, unique.  0 if not supported. */
+	ushort	sectorsize;	/* logical sector size */
+	ushort	satacap;
+	ushort	nvcachecap;
+	ulong	nvcachelblocks;	/* in logical blocks */
+	ushort	rpm;		/* 0 for unknown, 1 for non-rotating device, other for rpm */
+};
+
+
 static int
 identify(void)
 {
 	uchar c;
 	uchar buf[512];
 	int i;
-	ulong v;
-	int qdepth;
+	ushort w;
+	Atadev dev;
 
 	atacmd(0xec, 0, 0, 0, 0, Dev2host, buf);
 
@@ -398,25 +461,80 @@ identify(void)
 	disk.sectors |= (uvlong)g16(buf+101*2)<<16;
 	disk.sectors |= (uvlong)g16(buf+102*2)<<32;
 
-	v = g16(buf+83*2);
-	if((v & (1<<10)) == 0) {
-		dprint("lba48 not supported (word 83 %#lux)\n", v);
+	w = g16(buf+49*2);
+	if((w & Fcapdma) == 0 || (w & Fcaplba) == 0) {
+		dprint("disk does not support dma and/or lba\n");
 		return -1;
 	}
 
-	v = g16(buf+75*2);
-	qdepth = 1+(v&MASK(5));
-	USED(qdepth);
+	dev.major = g16(buf+80*2);
+	dev.minor = g16(buf+81*2);
+	for(i = 0; i < 6; i++) {
+		dev.cmdset[i] = g16(buf+(82+i)*2);
+	}
+	if((dev.cmdset[1] & Fvalidmask) != Fvalid)
+		dev.cmdset[1] = 0;
+	if((dev.cmdset[2] & Fvalidmask) != Fvalid)
+		dev.cmdset[2] = 0;
+	if((dev.cmdset[3+2] & Fvalidmask) != Fvalid)
+		dev.cmdset[3+2] = 0;
 
-	/* xxx check ncq support, how? */
+	if((dev.cmdset[3+1] & Feat1Addr48) == 0) {
+		dprint("disk does not have lba48 enabled\n");
+		return -1;
+	}
+
+	dev.sectorflags = g16(buf+106*2);
+	dev.sectorsize = 512;
+	if((dev.sectorflags & Fvalidmask) != Fvalid)
+		dev.sectorflags = 0;
+	if(dev.sectorflags & LargeLogicalSectors)
+		dev.sectorsize = 2 * (g16(buf+117*2)<<16 | g16(buf+118*2)<<0);
+
+	dev.wwn = 0;
+	if((dev.cmdset[2] & Feat2WWName64) && (dev.cmdset[3+2] & Feat2WWName64))
+		dev.wwn = (uvlong)g16(buf+108*2)<<48 | (uvlong)g16(buf+109*2)<<32 | (uvlong)g16(buf+110*2)<<16 | (uvlong)g16(buf+111*2)<<0;
+
+	dev.satacap = g16(buf+76*2);
+	if(dev.satacap == 0xffff)
+		dev.satacap = 0;
+
+	dev.nvcachecap = g16(buf+214*2);
+	dev.nvcachelblocks = g16(buf+215*2)<<16 | g16(buf+216*2)<<0;
+
+	dev.rpm = g16(buf+217*2);
+	/* check for "reserved" range in ata8-acs, set to 0 unknown if so */
+	if(dev.rpm > 1 && dev.rpm < 0x400 || dev.rpm == 0xffff)
+		dev.rpm = 0;
 
 if(satadebug) {
 	dprint("model %q\n", disk.model);
 	dprint("serial %q\n", disk.serial);
 	dprint("firmware %q\n", disk.firmware);
 	dprint("sectors %llud\n", disk.sectors);
-	dprint("size %llud bytes\n", disk.sectors*512);
-	dprint("size %llud gb\n", disk.sectors*512/(1024*1024*1024));
+	dprint("size %llud bytes, %llud gb\n", disk.sectors*512, disk.sectors*512/(1024*1024*1024));
+	dprint("ata/atapi versions %hux/%hux\n", dev.major, dev.minor);
+	dprint("sectorflags:%s%s\n",
+		(dev.sectorflags & MultiLogicalSectors) ? " MultiLogicalSectors" : "",
+		(dev.sectorflags & LargeLogicalSectors) ? " LargeLogicalSectors" : "");
+	dprint("logical sector size %d\n", dev.sectorsize);
+	dprint("sata cap:%s%s%s\n",
+		(dev.satacap & SataCapNCQ) ? " ncq" : "",
+		(dev.satacap & SataCapGen2) ? " 3.0gbps" : "",
+		(dev.satacap & SataCapGen1) ? " 1.5gbps" : "");
+	dprint("cmdset %04hux %04hux %04hux %04hux %04hux %04hux\n",
+		dev.cmdset[0], dev.cmdset[1], dev.cmdset[2], dev.cmdset[3], dev.cmdset[4], dev.cmdset[5]);
+	dprint("            disabled: %04hux %04hux %04hux\n",
+		dev.cmdset[0] & ~dev.cmdset[3+0],
+		dev.cmdset[1] & ~dev.cmdset[3+1],
+		dev.cmdset[2] & ~dev.cmdset[3+2]);
+	dprint("wwn %llux\n", dev.wwn);
+	dprint("nvcache cap:%s%s%s\n",
+		(dev.nvcachecap & NvcacheEnabled) ? " NvcacheEnabled" : "",
+		(dev.nvcachecap & NvcachePMEnabled) ? " NvcachePMEnabled" : "",
+		(dev.nvcachecap & NvcachePMSup) ? " NvcachePMSup" : "");
+	dprint("nvcache lblocks: %lud\n", dev.nvcachelblocks);
+	dprint("rpm %hud\n", dev.rpm);
 }
 	satadir[Qdata].length = disk.sectors*512;
 	disk.valid = 1;
@@ -442,15 +560,15 @@ atadump(void)
 	e = p+n;
 
 	p = seprint(p, e, "ata:\n");
-	p = seprint(p, e, " data       %04lux\n", a->data);
-	p = seprint(p, e, " feat/error %02lux\n", a->feat);
-	p = seprint(p, e, " sectors    %02lux\n", a->sectors);
-	p = seprint(p, e, " lbalow     %02lux\n", a->lbalow);
-	p = seprint(p, e, " lbamid     %02lux\n", a->lbamid);
-	p = seprint(p, e, " lbahigh    %02lux\n", a->lbahigh);
-	p = seprint(p, e, " dev        %02lux\n", a->dev);
-	p = seprint(p, e, " cmd/status %02lux\n", a->cmd);
-	p = seprint(p, e, " ctl        %02lux\n", a->ctl);
+	p = seprint(p, e, " data          %04lux\n", a->data);
+	p = seprint(p, e, " feat/error    %02lux\n", a->feat);
+	p = seprint(p, e, " sectors       %02lux\n", a->sectors);
+	p = seprint(p, e, " lbalow        %02lux\n", a->lbalow);
+	p = seprint(p, e, " lbamid        %02lux\n", a->lbamid);
+	p = seprint(p, e, " lbahigh       %02lux\n", a->lbahigh);
+	p = seprint(p, e, " dev           %02lux\n", a->dev);
+	p = seprint(p, e, " status/cmd    %02lux\n", a->cmd);
+	p = seprint(p, e, " altstatus/ctl %02lux\n", a->ctl);
 	USED(p);
 
 	dprint("%s", buf);
@@ -589,12 +707,6 @@ if(0) {
 	diprint("after phy init, have connection, sstatus %#lux, serror %#lux\n", sr->ifc.sstatus, sr->ifc.serror);
 
 	sr->ifc.ifccfg &= ~Ignorebsy;
-
-if(0) {
-	tsleep(&up->sleep, return0, nil, 500);
-	dprint("ata after real reset\n");
-	atadump();
-}
 
 	dprint("sr->ifc.sstatus before ata identify %#lux\n", sr->ifc.sstatus);
 
@@ -917,17 +1029,24 @@ io(int t, void *buf, long nb, vlong off)
 	rq->ata[2] = (lbahi<<0)|(nshi<<24); /* 24 bit lba previous, feat ext/previous */
 	rq->ata[3] = ((i<<3)<<0)|(0<<8); /* sectors current (tag), previous */
 	dcwbinv(rq, sizeof rq[0]);
-	sr->ifc.fiscfg = (1<<6)-1;
-	sr->ifc.fisintr = ~0;
-	sr->ifc.fisintrena = 0;
 
 diprint("io, using slot %d, off %llud\n", i, off);
 	v = 1<<i;
 	satadone &= ~v;
 	sr->edma.reqin = (ulong)&reqs[reqnext];
 	if((sr->edma.cmd & EdmaEnable) == 0) {
-		sr->edma.cfg |= ECFGncq|0x1f; /* 0x1f for queue depth? */
+		/* xxx verify that DET in sstatus is 3 */
+
+		/* clear edma intr error, and satahc interrupt dmaXdone */
+
+		sr->edma.cfg = (sr->edma.cfg & ~ECFGqueue) | ECFGncq;
+
+		sr->ifc.fisintr = ~0;
+		sr->ifc.fisintrena = 0;
+		sr->ifc.fiscfg = (1<<6)-1;
+
 		sr->edma.cmd = EdmaEnable;
+		regreadl(&sr->edma.cmd);
 	}
 	qunlock(&reqsl);
 
