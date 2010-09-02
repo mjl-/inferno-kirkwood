@@ -4,7 +4,7 @@ kirkwood has two ports, on the sheevaplug only the second port is in use.
 for now we'll assume ncq "first party dma" read/write commands (very old sata disks won't work).
 
 todo:
-- figure out what to do with the tag in the responses from the response queue.  for ncq.
+- when doing ata commands, verify ata status if ok.
 - read ata/atapi signature in registers after reset?
 - get interrupt when device sends registers.  so we can check for BSY then, or start reading data, etc.
 - detect whether packet command is accepted.  try if packet commands work.
@@ -37,6 +37,7 @@ static int satadebug = 1;
 #define dprint	if(satadebug)print
 
 char Enodisk[] = "no disk";
+char Etimeout[] = "timeout";
 
 typedef struct Req Req;
 typedef struct Resp Resp;
@@ -90,9 +91,9 @@ struct Disk
 	uvlong	sectors;
 };
 
-static volatile ulong satadone;
 static QLock reqsl;
 static Rendez reqsr[32];
+static volatile ulong reqsdone[32];
 static Req *reqs;
 static Resp *resps;
 static Prd *prds;
@@ -230,7 +231,7 @@ sataintr(Ureg*, void*)
 {
 	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
-	ulong v, w;
+	ulong v, tag;
 	static int count = 0;
 	ulong in, out;
 	
@@ -243,11 +244,9 @@ sataintr(Ureg*, void*)
 	if(v & Sata1done) {
 		diprint("m 1done\n");
 	}
-	if(v & Sata1dmadone) {
-		diprint("m 1dmadone\n");
-	}
 	hr->intr = 0;
 	sr->edma.intre = 0;
+	intrclear(Irqlo, IRQ0sata);
 
 	diprint("reqin %#lux reqout %#lux respin %#lux respout %#lux\n", sr->edma.reqin, sr->edma.reqout, sr->edma.respin, sr->edma.respout);
 
@@ -257,19 +256,15 @@ sataintr(Ureg*, void*)
 	for(;;) {
 		if(in == out)
 			break;
-		w = resps[in].idflags & MASK(5);
-		if(w != in)
-			iprint("response, in %lud, tag %lud\n", in, w);
+
 		/* determine which request is done, wakeup its caller. */
-		satadone |= 1<<out;
-		diprint("new resp out %lud (in %lud), satadone now %#lux\n", out, in, satadone);
-		/* xxx check for error */
-		wakeup(&reqsr[out]);
+		tag = resps[out].idflags & MASK(5);
+		/* xxx check for error? */
+		reqsdone[tag] = 1;
+		wakeup(&reqsr[tag]);
 		out = (out+1)%32;
 		sr->edma.respout = (ulong)&resps[out];
 	}
-
-	intrclear(Irqlo, IRQ0sata);
 }
 
 static void
@@ -642,7 +637,9 @@ satainit(void)
 {
 	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
+	AtaReg *ar = ATA1REG;
 	int n;
+	int i;
 
 	diprint("satainit...\n");
 
@@ -711,7 +708,16 @@ if(0) {
 	dprint("sr->ifc.sstatus before ata identify %#lux\n", sr->ifc.sstatus);
 
 	/* xxx horrible, should properly wait during command execution, until device no longer busy */
-	tsleep(&up->sleep, return0, nil, 1000);
+	i = 0;
+	for(;;) {
+		if((ar->status & (Absy|Adrq)) == 0)
+			break;
+		if(++i == 20) {
+			dprint("disk not ready\n");
+			return;
+		}
+		tsleep(&up->sleep, return0, nil, 100);
+	}
 	if(identify() < 0) {
 		dprint("no disk\n");
 		return;
@@ -926,7 +932,7 @@ static int
 isdone(void *p)
 {
 	ulong *v = p;
-	return (satadone & *v) != 0;
+	return *v;
 }
 
 static long
@@ -956,6 +962,7 @@ prdfill(Prd *prd, uchar *buf, long n)
 }
 
 enum {
+	/* first param for io() */
 	Read, Write,
 };
 static ulong
@@ -964,13 +971,12 @@ io(int t, void *buf, long nb, vlong off)
 	SataReg *sr = SATA1REG;
 	Req *rq;
 	int i;
-	ulong v;
 	ulong ns;
 	ulong dev;
 	ulong nslo, nshi;
 	uvlong lba;
 	ulong lbalo, lbahi;
-	ulong cmds[] = {0x60, 0x61};
+	ulong cmds[] = {0x60, 0x61}; /* xxx this is for sata fpdma only, ncq */
 	Prd *prd;
 
 	if(disk.valid == 0)
@@ -1031,12 +1037,9 @@ io(int t, void *buf, long nb, vlong off)
 	dcwbinv(rq, sizeof rq[0]);
 
 diprint("io, using slot %d, off %llud\n", i, off);
-	v = 1<<i;
-	satadone &= ~v;
+	reqsdone[i] = 0;
 	sr->edma.reqin = (ulong)&reqs[reqnext];
 	if((sr->edma.cmd & EdmaEnable) == 0) {
-		/* xxx verify that DET in sstatus is 3 */
-
 		/* clear edma intr error, and satahc interrupt dmaXdone */
 
 		sr->edma.cfg = (sr->edma.cfg & ~ECFGqueue) | ECFGncq;
@@ -1050,7 +1053,9 @@ diprint("io, using slot %d, off %llud\n", i, off);
 	}
 	qunlock(&reqsl);
 
-	sleep(&reqsr[i], isdone, &v);
+	tsleep(&reqsr[i], isdone, &reqsdone[i], 10*1000);
+	if(!reqsdone[i])
+		error(Etimeout);
 	/* xxx check for error, raise it */
 
 	return ns*512;
@@ -1159,9 +1164,7 @@ sataread(Chan *c, void *buf, long n, vlong off)
 		free(s);
 		return n;
 	case Qdata:
-diprint("dcwbinv0 %ld\n", n);
 		dcwbinv(buf, n);
-diprint("dcwbinv1 %ld\n", n);
 		r = 0;
 		while(r < n) {
 			nn = io(Read, (uchar*)buf+r, n-r, off+r);

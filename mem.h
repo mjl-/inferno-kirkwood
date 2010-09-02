@@ -9,7 +9,7 @@
 #define PGROUND(s)	ROUND(s, BY2PG)
 #define BIT(n)		(1UL<<n)
 #define BITS(a,b)	((1UL<<(b+1))-(1UL<<a))
-#define MASK(n)		((1UL<<(n))-1)		/* could use BITS(0, n-1) */
+#define MASK(n)		((1UL<<(n))-1)
 
 #define MAXMACH		1			/* max # cpus system can run */
 
