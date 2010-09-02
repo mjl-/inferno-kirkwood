@@ -5,22 +5,19 @@ for now we'll assume ncq "first party dma" read/write commands (very old sata di
 
 todo:
 - when doing ata commands, verify ata status if ok.
-- read ata/atapi signature in registers after reset?
 - get interrupt when device sends registers.  so we can check for BSY then, or start reading data, etc.
-- detect whether packet command is accepted.  try if packet commands work.
-- properly wait until device is no longer busy during startup
-- proper locking, wait for free edma slot.
-- look at cache flushes around dma
 - error handling & propagating to caller.
 - better detect ata support of drives
-- interrupt coalescing
-- fix ncq, return early responses (in different order than request queue)
-- general ata commands
-- use generic sd interface (#S;  we need partitions)
+- detect whether packet command is accepted.  try if packet commands work.
+- read ata/atapi signature in registers after reset?
+- look at cache flushes around dma
 - hotplug, at least handle disconnects
+- interrupt coalescing
+- general ata commands
+- support: pio,dma,ncq with ata commands.  perhaps atapi-mmc & atapi-scsi too?  this chip only does pio with atapi...
+- use generic sd interface (#S;  we need partitions)
 - abstract for multiple ports (add controller struct to functions)
 - in satainit(), only start the disk init, don't wait for it to be ready?  faster booting, seems it takes controller/disk some time to init after reset.
-- support for non-ncq drives, by normal dma commands?  should support setting iomode: pio dma satancq.  commands should ata for now.  could be atapi-mmc or atapi-scsi too.  not good for this chip because dma with atapi is not supported by the chip and pio is slow.
  */
 
 #include	"u.h"
@@ -91,9 +88,20 @@ struct Disk
 	uvlong	sectors;
 };
 
-static QLock reqsl;
-static Rendez reqsr[32];
+/*
+ * with ncq we get 32 tags.  the controller has 32 slots, to write
+ * commands to the device.  if a tag is available, there is also always
+ * a slot available.  so we administer by tag.
+ */
+static uchar tags[32];
+static int tagnext;
+static int tagsinuse;
+static Rendez tagl;	/* protected by reqsl */
+
+static Rendez reqsr[32];	/* protected by requiring to hold tag */
 static volatile ulong reqsdone[32];
+static QLock reqsl;
+
 static Req *reqs;
 static Resp *resps;
 static Prd *prds;
@@ -259,7 +267,9 @@ sataintr(Ureg*, void*)
 
 		/* determine which request is done, wakeup its caller. */
 		tag = resps[out].idflags & MASK(5);
+
 		/* xxx check for error? */
+
 		reqsdone[tag] = 1;
 		wakeup(&reqsr[tag]);
 		out = (out+1)%32;
@@ -643,6 +653,10 @@ satainit(void)
 
 	diprint("satainit...\n");
 
+	tagnext = tagsinuse = 0;
+	for(i = 0; i < nelem(tags); i++)
+		tags[i] = i;
+
 	/* disable interrupts */
 	hr->intrmainena = 0;
 	sr->edma.intreena = 0;
@@ -935,6 +949,12 @@ isdone(void *p)
 	return *v;
 }
 
+static int
+tagfree(void *)
+{
+	return tagsinuse < nelem(tags);
+}
+
 static long
 min(long a, long b)
 {
@@ -971,6 +991,7 @@ io(int t, void *buf, long nb, vlong off)
 	SataReg *sr = SATA1REG;
 	Req *rq;
 	int i;
+	ulong tag;
 	ulong ns;
 	ulong dev;
 	ulong nslo, nshi;
@@ -999,7 +1020,11 @@ io(int t, void *buf, long nb, vlong off)
 		error(Ebadarg);
 
 	qlock(&reqsl);
-	/* xxx wait until edma/slot becomes available */
+
+	sleep(&tagl, tagfree, nil);
+	tag = tags[tagnext];
+	tagnext = (tagnext+1)%nelem(tags);
+	tagsinuse++;
 
 	i = reqnext;
 	rq = &reqs[i];
@@ -1022,22 +1047,21 @@ io(int t, void *buf, long nb, vlong off)
 	}
 	if(t == Read)
 		rq->ctl |= Rdev2mem;
-	rq->ctl |= i<<Rdevtagshift;
-	rq->ctl |= i<<Rhosttagshift;
+	rq->ctl |= tag<<Rdevtagshift;
+	rq->ctl |= tag<<Rhosttagshift;
 
-	lbalo = lba & MASK(24);
-	lbahi = (lba>>24) & MASK(24);
-	nslo = ns&0xff;
-	nshi = (ns>>8)&0xff;
+	lbalo = lba>>0 & MASK(24);
+	lbahi = lba>>24 & MASK(24);
+	nslo = ns>>0 & 0xff;
+	nshi = ns>>8 & 0xff;
 	dev = 1<<6;
-	rq->ata[0] = (cmds[t]<<16)|(nslo<<24); /* cmd, feat current */
-	rq->ata[1] = (lbalo<<0)|(dev<<24); /* 24 bit lba current, dev */
-	rq->ata[2] = (lbahi<<0)|(nshi<<24); /* 24 bit lba previous, feat ext/previous */
-	rq->ata[3] = ((i<<3)<<0)|(0<<8); /* sectors current (tag), previous */
+	rq->ata[0] = cmds[t]<<16 | nslo<<24;  /* cmd, feat current */
+	rq->ata[1] = lbalo<<0 | dev<<24;  /* 24 bit lba current, dev */
+	rq->ata[2] = lbahi<<0 | nshi<<24;  /* 24 bit lba previous, feat ext/previous */
+	rq->ata[3] = (tag<<3)<<0 | 0<<8;  /* sectors current (tag), previous */
 	dcwbinv(rq, sizeof rq[0]);
 
-diprint("io, using slot %d, off %llud\n", i, off);
-	reqsdone[i] = 0;
+	reqsdone[tag] = 0;
 	sr->edma.reqin = (ulong)&reqs[reqnext];
 	if((sr->edma.cmd & EdmaEnable) == 0) {
 		/* clear edma intr error, and satahc interrupt dmaXdone */
@@ -1053,9 +1077,18 @@ diprint("io, using slot %d, off %llud\n", i, off);
 	}
 	qunlock(&reqsl);
 
-	tsleep(&reqsr[i], isdone, &reqsdone[i], 10*1000);
-	if(!reqsdone[i])
+	/* xxx have to return tag on interrupt? */
+	tsleep(&reqsr[tag], isdone, &reqsdone[tag], 10*1000);
+
+	if(!reqsdone[tag]) {
+		/* xxx should do ata reset, or return the tag back to pool */
 		error(Etimeout);
+	}
+
+	tags[(tagnext-tagsinuse+nelem(tags)) % nelem(tags)] = tag;
+	tagsinuse--;
+	wakeup(&tagl);
+
 	/* xxx check for error, raise it */
 
 	return ns*512;
