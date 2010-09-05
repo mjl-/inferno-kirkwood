@@ -1,23 +1,28 @@
 /*
 first attempt at driver for the sata controller.
-kirkwood has two ports, on the sheevaplug only the second port is in use.
-for now we'll assume ncq "first party dma" read/write commands (very old sata disks won't work).
+kirkwood has two ports, on the sheevaplug with sata from newit only the second port is in use.
 
 todo:
-- when doing ata commands, verify ata status if ok.
-- get interrupt when device sends registers.  so we can check for BSY then, or start reading data, etc.
-- error handling & propagating to caller.
+- keep track of supported features of ata drive.
+- non-ncq dma.
+- mark disk as invalid before doing identify.  make sure we check that disk is valid before operating on it.
+
+- better support for ata commands, reading status bits after command.
 - better detect ata support of drives
 - detect whether packet command is accepted.  try if packet commands work.
 - read ata/atapi signature in registers after reset?
-- look at cache flushes around dma
-- hotplug, at least handle disconnects
+- look at dcache flushes around dma
 - interrupt coalescing
-- general ata commands
-- support: pio,dma,ncq with ata commands.  perhaps atapi-mmc & atapi-scsi too?  this chip only does pio with atapi...
-- use generic sd interface (#S;  we need partitions)
+- support for general ata commands, e.g. smart, security
+- use generic sd (or bs) interface (#S;  we need partitions)
+- lba24-only drives
 - abstract for multiple ports (add controller struct to functions)
 - in satainit(), only start the disk init, don't wait for it to be ready?  faster booting, seems it takes controller/disk some time to init after reset.
+
+for the future:
+- power management
+- support for port multiplier
+- support for atapi (mcc scsi), but this chip cannot do dma for packet commands.
  */
 
 #include	"u.h"
@@ -29,7 +34,7 @@ todo:
 
 #include	"io.h"
 
-static int satadebug = 1;
+static int satadebug = 0;
 #define diprint	if(satadebug)iprint
 #define dprint	if(satadebug)print
 
@@ -96,11 +101,34 @@ struct Disk
 static uchar tags[32];
 static int tagnext;
 static int tagsinuse;
-static Rendez tagl;	/* protected by reqsl */
+static int ntags;
+static Rendez tagr;	/* protected by reqsl */
 
 static Rendez reqsr[32];	/* protected by requiring to hold tag */
 static volatile ulong reqsdone[32];
 static QLock reqsl;
+
+static volatile ulong atadone;	/* whether ata interrupt has occurred */
+static Rendez atadoner;
+
+static volatile ulong ataregs;	/* registers received from device */
+static Rendez ataregsr;
+
+/* for reqsdone and atadone */
+enum {
+	Rok,
+	Rtimeout,
+	Rfail,
+};
+static char *donemsgs[] = {
+"ok",
+"timeout",
+"error",
+};
+
+static struct {
+	ulong	serrorintrs;
+} stats;
 
 static Req *reqs;
 static Resp *resps;
@@ -109,12 +137,21 @@ static int reqnext;
 static int respnext;
 static Disk disk;
 
+static Lock startil;		/* for access to startr & start, ilock */
+static Rendez startr;		/* for kproc satastart to sleep on */
+static volatile ulong start;	/* how to start, see below */
+enum {
+	StartReset	= 1<<0,
+	StartIdentify	= 1<<1,
+};
+
+
 enum {
 	/* edma config */
 	ECFGncq		= 1<<5,		/* use ncq */
 	ECFGqueue	= 1<<9,		/* use ata queue dma commands */
 
-	/* edma interrup error cause */
+	/* edma interrupt error cause */
 	Edeverr		= 1<<2,		/* device error */
 	Edevdis		= 1<<3,		/* device disconnect */
 	Edevcon		= 1<<4,		/* device connected */
@@ -123,15 +160,27 @@ enum {
 	Etransint	= 1<<8,		/* edma transport layer interrupt */
 	Eiordy		= 1<<12,	/* edma iordy timeout */
 
-	Elinkmask	= 0xf,		/* link rx/tx control/data errors: */
+	Erxlinkmask	= 0xf,		/* link rx control/data errors */
 	Erxctlshift	= 13,
 	Erxdatashift	= 17,
+	Erxlinksatacrc	= 1<<0,		/* sata crc error */
+	Erxlinkfifo	= 1<<1,		/* internal fifo error */
+	Erxlinkresetsync= 1<<2,		/* link layer reset by SYNC from device */
+	Erxlinkother	= 1<<3,		/* other link ctl errors */
+
+	Etxlinkmask	= 0x1f,		/* link tx control/data errors */
 	Etxctlshift	= 21,
 	Etxdatashift	= 26,
-	Esatacrc	= 1<<0,		/* sata crc error */
-	Efifo		= 1<<1,		/* internal fifo error */
-	Eresetsync	= 1<<2,		/* link layer reset by SYNC from device */
-	Eotherrxctl	= 1<<3,		/* other link ctl errors */
+	Etxlinksatacrc	= 1<<0,		/* sata crc error */
+	Etxlinkfifo	= 1<<1,		/* internal fifo error */
+	Etxlinkresetsync= 1<<2,		/* link layer reset by SYNC from device */
+	Etxlinkdmat	= 1<<3,		/* link layer accepts DMAT from device */
+	Etxcollision	= 1<<4,		/* collision with receive */
+
+	Elinkmask	= Erxlinkmask<<Erxctlshift | Erxlinkmask<<Erxdatashift | Etxlinkmask<<Etxctlshift | Etxlinkmask<<Etxdatashift,
+	Elinkerrmask	= Erxlinkmask<<Erxctlshift | Erxlinkmask<<Erxdatashift | Etxlinkmask<<Etxdatashift,
+
+	Etransport	= 1<<31,	/* transport protocol error */
 
 	/* edma command */
 	EdmaEnable	= 1<<0,		/* enable edma */
@@ -145,7 +194,7 @@ enum {
 	Cacheempty	= 1<<6,		/* edma cache empty */
 	EdmaIdle	= 1<<7,		/* edma idle (but disk can have command pending) */
 
-	/* host controller interrupt */
+	/* host controller main interrupt */
 	Sata0err	= 1<<0,
 	Sata0done	= 1<<1,
 	Sata1err	= 1<<2,
@@ -153,6 +202,13 @@ enum {
 	Sata0dmadone	= 1<<4,
 	Sata1dmadone	= 1<<5,
 	Satacoaldone	= 1<<8,
+
+	/* host controller interrupt */
+	Idma0done	= 1<<0,		/* new crpb in out queue */
+	Idma1done	= 1<<1,
+	Iintrcoalesc	= 1<<4,
+	Idevintr0	= 1<<8,		/* ata interrupt when edma disabled */
+	Idevintr1	= 1<<9,
 
 	/* interface cfg */
 	SSC		= 1<<6,		/* SSC enable */
@@ -216,14 +272,13 @@ enum {
 
 
 enum {
-	Qdir, Qctlr, Qctl, Qdata, Qtest,
+	Qdir, Qctlr, Qctl, Qdata,
 };
 static Dirtab satadir[] = {
 	".",		{Qdir,0,QTDIR},	0,	0555,
 	"sd01",		{Qctlr,0,QTDIR}, 0,	0555,
 	"ctl",		{Qctl,0,0},	0,	0660,
 	"data",		{Qdata,0,0},	0,	0660,
-	"test",		{Qtest,0,0},	0,	0666,	 /* to be removed */
 };
 
 
@@ -234,47 +289,158 @@ g16(uchar *p)
 	return ((ulong)p[0]<<8) | ((ulong)p[1]<<0);
 }
 
+static int
+isdone(void *p)
+{
+	ulong *v = p;
+	return *v != Rtimeout;
+}
+
+static int
+notzero(void *p)
+{
+	ulong *v = p;
+	return *v != 0;
+}
+
+static int
+tagfree(void *)
+{
+	return tagsinuse < ntags;
+}
+
+static int
+tagsidle(void*)
+{
+	return tagsinuse == 0;
+}
+
+static long
+min(long a, long b)
+{
+	return (a < b) ? a : b;
+}
+
+static void
+satakick(ulong v)
+{
+	ilock(&startil);
+	diprint("satakick, v %#lux\n", v);
+	start = v;
+	wakeup(&startr);
+	iunlock(&startil);
+}
+
+static void
+sataabort(void)
+{
+	int i;
+
+	for(i = 0; i < nelem(reqsr); i++) {
+		reqsdone[i] = Rfail;
+		wakeup(&reqsr[i]);
+	}
+	atadone = Rfail;
+	wakeup(&atadoner);
+
+	/* xxx disable edma? */
+}
+
+/*
+ * hc main intr & enable register cause interrupts.
+ * main intr is read-only, the bits must be cleared in:
+ * - hc intr
+ * - edma error intr & enable
+ *   - serror & intr enable
+ *   - fis intr & enable
+ */
 static void
 sataintr(Ureg*, void*)
 {
 	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
-	ulong v, tag;
-	static int count = 0;
+	ulong v, e, tag;
 	ulong in, out;
-	
+
 	v = hr->intrmain;
 	diprint("intr %#lux, main %#lux\n", hr->intr, v);
 	if(v & Sata1err) {
 		diprint("intre %#lux\n", sr->edma.intre);
 		diprint("m 1err\n");
+
+		e = sr->edma.intre;
+		if(e & (Edevdis | Eiordy | Elinkerrmask | Etransport)) {
+			/* unrecoverable error.  need ata reset to anything in future. */
+			sataabort();
+			/* xxx send hotplug disconnect event? */
+			satakick(StartReset);
+		} else if(e & Edeverr) {
+			/* device to host fis, or set device bits fis received with ERR set.  during edma. */
+			/* xxx propagate error, how to recover? */
+			diprint("Edeverr\n");
+			sataabort();
+		}
+		if(e & Edevcon) {
+			/* device connected, hotplug */
+			diprint("Edevcon\n");
+			satakick(StartIdentify);
+		}
+		if(e & Eserror) {
+			/* Serror set */
+			diprint("Eserror, %08lux\n", sr->ifc.serror);
+			sr->ifc.serror = ~0UL;
+			stats.serrorintrs++;
+		}
+		if(e & Eselfdis) {
+			/* edma disabled itself */
+			/* xxx how to recover?  at least stop all activity and return error. */
+			iprint("Eselfdis\n");
+			sataabort();
+			satakick(StartReset);
+		}
+		if(e & Etransint) {
+			/* fis interrupt */
+			sr->ifc.fisintr = 0;
+			ataregs = 1;
+			wakeup(&ataregsr);
+		}
+
+		sr->edma.intre = 0;
 	}
 	if(v & Sata1done) {
-		diprint("m 1done\n");
+		if(hr->intr & Idma1done) {
+			diprint("m 1dmadone\n");
+
+			hr->intr = ~Idma1done;
+
+			dcinv(resps, 32*sizeof resps[0]);
+			in = (sr->edma.respin & MASK(8))/sizeof (Resp);
+			out = (sr->edma.respout & MASK(8))/sizeof (Resp);
+			for(;;) {
+				if(in == out)
+					break;
+
+				/* determine which request is done, wakeup its caller. */
+				tag = resps[out].idflags & MASK(5);
+				/* xxx check for error in idflags?  we now handle error through Edeverr, and make all i/o fail... */
+
+				reqsdone[tag] = Rok;
+				wakeup(&reqsr[tag]);
+				out = (out+1)%32;
+				sr->edma.respout = (ulong)&resps[out];
+			}
+		}
+		if(hr->intr & Idevintr1) {
+			diprint("m 1ataintr\n");
+			/* reading status clears the interrupt */
+			regreadl(&ATA1REG->status);
+			hr->intr = ~Idevintr1;
+			atadone = Rok;
+			wakeup(&atadoner);
+		}
 	}
-	hr->intr = 0;
-	sr->edma.intre = 0;
+
 	intrclear(Irqlo, IRQ0sata);
-
-	diprint("reqin %#lux reqout %#lux respin %#lux respout %#lux\n", sr->edma.reqin, sr->edma.reqout, sr->edma.respin, sr->edma.respout);
-
-	dcinv(resps, 32*sizeof resps[0]);
-	in = (sr->edma.respin & MASK(8))/sizeof (Resp);
-	out = (sr->edma.respout & MASK(8))/sizeof (Resp);
-	for(;;) {
-		if(in == out)
-			break;
-
-		/* determine which request is done, wakeup its caller. */
-		tag = resps[out].idflags & MASK(5);
-
-		/* xxx check for error? */
-
-		reqsdone[tag] = 1;
-		wakeup(&reqsr[tag]);
-		out = (out+1)%32;
-		sr->edma.respout = (ulong)&resps[out];
-	}
 }
 
 static void
@@ -305,23 +471,35 @@ pioput(uchar *p)
 	}
 }
 
+static void
+atawait(void)
+{
+	AtaReg *a = ATA1REG;
+
+	while(a->status & Absy) {
+		ataregs = 0;
+		sleep(&ataregsr, notzero, &ataregs);
+	}
+}
+
+/* properly deal with commands that do (not) generate interrupt, and do (not) read/write data. */
 enum {
 	Nodata, Host2dev, Dev2host,
 };
-static ulong
-atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, uchar *data)
+static void
+atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, uchar *data, int ms)
 {
-	SatahcReg *hr = SATAHCREG;
-	SataReg *sr = SATA1REG;
 	AtaReg *a = ATA1REG;
 	ulong v;
+	char *msg;
 
 	/* xxx sleep until edma is disabled or edma is idle (edma status, bit 7 (EDMAIdle).  then disable edma. */
+	/* xxx assert that edma is disabled */
 
-	/* xxx don't blindly reset registers later */
-	hr->intrmainena &= ~(Sata1err|Sata1done|Sata1dmadone);
+	dprint("ata, status %#lux\n", a->status);
+	atawait();
 
-	diprint("ata, status %#lux\n", a->status);
+	atadone = Rtimeout;
 	a->feat = feat;
 	a->sectors = sectors;
 	a->lbalow = (lba>>0) & 0xff;
@@ -329,17 +507,22 @@ atacmd(uchar cmd, uchar feat, uchar sectors, ulong lba, uchar dev, int dir, ucha
 	a->lbahigh = (lba>>16) & 0xff;
 	a->dev = dev;
 	a->cmd = cmd;
-	delay(100);
+	if(ms > 0) {
+		tsleep(&atadoner, isdone, &atadone, ms);
+		if(atadone != Rok) {
+			msg = donemsgs[atadone];
+			dprint("%s\n", msg);
+			error(msg);
+		}
+	} else {
+		sleep(&atadoner, isdone, &atadone);
+	}
 	v = a->status;
-if(satadebug) {
-	diprint("result, status %#lux\n", v);
-	if(v & Aerr)	diprint("  err\n");
-	if(v & Adrq)	diprint("  drq\n");
-	if(v & Adf)	diprint("  df\n");
-	if(v & Adrdy)	diprint("  drdy\n");
-	if(v & Absy)	diprint("  bsy\n");
-}
-	/* xxx check for & propagate errors */
+
+	if(v & Aerr)
+		error("ata command failed");
+	if(v & Adf)
+		error("device fault");
 
 	switch(dir) {
 	case Nodata:
@@ -351,10 +534,37 @@ if(satadebug) {
 		pioget(data);
 		break;
 	}
+}
 
-	hr->intrmainena |= Sata1err|Sata1done|Sata1dmadone;
-	hr->intr = 0;
-	return v;
+static int
+atacheck(ulong statusmask, ulong status)
+{
+	if((ATA1REG->status & statusmask) != status)
+		return -1;
+	return 0;
+}
+
+/* claim the sata controller.  must be called before doing ata commands, outside of edma. */
+static void
+sataclaim(void)
+{
+	SataReg *sr = SATA1REG;
+
+	qlock(&reqsl);
+	do {
+		sleep(&tagr, tagsidle, nil);
+	} while(tagsinuse > 0);
+	SATA1REG->edma.cmd |= EdmaAbort;
+	sr->ifc.fisintrena |= 1<<0;
+}
+
+static void
+sataunclaim(void)
+{
+	SataReg *sr = SATA1REG;
+
+	sr->ifc.fisintrena &= ~(1<<0);
+	qunlock(&reqsl);
 }
 
 /* strip spaces in string.  at least western digital returns space-padded strings for "identify device". */
@@ -436,7 +646,7 @@ struct Atadev {
 };
 
 
-static int
+static void
 identify(void)
 {
 	uchar c;
@@ -445,15 +655,15 @@ identify(void)
 	ushort w;
 	Atadev dev;
 
-	atacmd(0xec, 0, 0, 0, 0, Dev2host, buf);
+	atacmd(0xec, 0, 0, 0, 0, Dev2host, buf, 60*1000);
+	if(atacheck(Absy|Adrdy|Adf|Adrq|Aerr, Adrdy) < 0)
+		error("identify failed");
 
 	c = 0;
 	for(i = 0; i < 512; i++)
 		c += buf[i];
-	if(c != 0) {
-		dprint("check byte for 'identify device' response invalid\n");
-		return -1;
-	}
+	if(c != 0)
+		error("check byte for 'identify device' response invalid");
 
 	memmove(disk.serial, buf+10*2, sizeof disk.serial-1);
 	memmove(disk.firmware, buf+23*2, sizeof disk.firmware-1);
@@ -467,10 +677,13 @@ identify(void)
 	disk.sectors |= (uvlong)g16(buf+102*2)<<32;
 
 	w = g16(buf+49*2);
-	if((w & Fcapdma) == 0 || (w & Fcaplba) == 0) {
-		dprint("disk does not support dma and/or lba\n");
-		return -1;
-	}
+	if((w & Fcapdma) == 0 || (w & Fcaplba) == 0)
+		error("disk does not support dma and/or lba");
+
+	w = g16(buf+75*2);
+	ntags = 1 + (w&MASK(5));
+	for(i = 0; i < ntags; i++)
+		tags[i] = i;
 
 	dev.major = g16(buf+80*2);
 	dev.minor = g16(buf+81*2);
@@ -484,10 +697,8 @@ identify(void)
 	if((dev.cmdset[3+2] & Fvalidmask) != Fvalid)
 		dev.cmdset[3+2] = 0;
 
-	if((dev.cmdset[3+1] & Feat1Addr48) == 0) {
-		dprint("disk does not have lba48 enabled\n");
-		return -1;
-	}
+	if((dev.cmdset[3+1] & Feat1Addr48) == 0)
+		error("disk does not have lba48 enabled");
 
 	dev.sectorflags = g16(buf+106*2);
 	dev.sectorsize = 512;
@@ -533,7 +744,7 @@ if(satadebug) {
 		dev.cmdset[0] & ~dev.cmdset[3+0],
 		dev.cmdset[1] & ~dev.cmdset[3+1],
 		dev.cmdset[2] & ~dev.cmdset[3+2]);
-	dprint("wwn %llux\n", dev.wwn);
+	dprint("wwn %016llux\n", dev.wwn);
 	dprint("nvcache cap:%s%s%s\n",
 		(dev.nvcachecap & NvcacheEnabled) ? " NvcacheEnabled" : "",
 		(dev.nvcachecap & NvcachePMEnabled) ? " NvcachePMEnabled" : "",
@@ -542,15 +753,28 @@ if(satadebug) {
 	dprint("rpm %hud\n", dev.rpm);
 }
 	satadir[Qdata].length = disk.sectors*512;
+	//xxx satadir[Qdata].length = 2048000*512;
 	disk.valid = 1;
-
-	return 0;
 }
 
 static void
 flush(void)
 {
-	atacmd(0xea, 0, 0, 0, 0, Nodata, nil);
+	AtaReg *a = ATA1REG;
+
+	sataclaim();
+	if(waserror()) {
+		sataunclaim();
+		nexterror();
+	}
+
+	atacmd(0xea, 0, 0, 0, 0, Nodata, nil, 0);
+	/* xxx should log the lba48 sector that failed and perhaps try to flush the rest? */
+	if(atacheck(Absy|Adrdy|Adf|Adrq|Aerr, Adrdy) < 0)
+		error("flush cache ext failed");
+
+	poperror();
+	sataunclaim();
 }
 
 static void
@@ -599,12 +823,16 @@ satareset(void)
 	sr->ifc.serrintrena = 0;
 	sr->ifc.fisintrena = 0;
 
-	/* clear interrupts */
-	sr->edma.intre = 0;
-	/* xxx more */
-
 	/* disable & abort edma, bdma */
 	sr->edma.cmd = (sr->edma.cmd & ~EdmaEnable) | EdmaAbort;
+
+	/* clear interrupts */
+	hr->intr = ~0UL;
+	sr->edma.intre = 0;
+	sr->ifc.serror = ~0UL;
+	sr->ifc.fisintr = 0;
+	
+	/* xxx more */
 
 	/* xxx should set full register? */
 	sr->ifc.ifccfg &= ~Physhutdown;
@@ -618,6 +846,13 @@ satareset(void)
 	hr->intrcoalesc = 0; /* raise interrupt after 0 completions (disable coalescing) */
 	hr->intrtime = 0; /* number of clocks before asserting interrupt (disable coalescing) */
 	hr->intr = 0;  /* clear */
+
+	/* clock ticks to reach 1250ns (as specified for sata). */
+	sr->edma.iordytimeout = 0xbc;
+	if(CLOCKFREQ == 200*1000*1000)
+		sr->edma.iordytimeout = 0xfa;
+	sr->edma.cmddelaythr = 0;
+	// sr->edma.haltcond = 
 
 /* xxx should set windows correct too */
 if(0) {
@@ -643,25 +878,99 @@ if(0) {
 }
 
 static void
+satastartreset(void)
+{
+	SataReg *sr = SATA1REG;
+
+	diprint("before ata reset, sstatus %#lux\n", sr->ifc.sstatus);
+
+	sr->edma.cmd |= Atareset;
+	regreadl(&sr->edma.cmd);
+	sr->edma.cmd &= ~Atareset;
+	tsleep(&up->sleep, return0, nil, 200); // xxx needed?
+
+	/* errata magic, to fix the phy.  see uboot code (no docs available).  */
+	sr->ifc.phym3 = (sr->ifc.phym3 & ~0x78100000UL) | 0x28000000UL;
+	sr->ifc.phym4 = (sr->ifc.phym4 & ~1) | (1<<16);
+	sr->ifc.phym9g2 = (sr->ifc.phym9g2 & ~0x400fUL) | 0x00008UL; /* tx driver amplitude */
+	sr->ifc.phym9g1 = (sr->ifc.phym9g1 & ~0x400fUL) | 0x00008UL; /* tx driver amplitude */
+	tsleep(&up->sleep, return0, nil, 100); /* needed? */
+
+	sr->ifc.serror = ~0UL;
+	sr->ifc.serrintrena = EN|EX;
+
+	/* get Etransint interrupt when fis "registers device to host" comes in, for ata commands waiting on Absy */
+	sr->ifc.fisintrena = 0;
+	sr->ifc.fiscfg = 1<<0;
+
+	diprint("before phy init, sstatus %#lux, serror %#lux\n", sr->ifc.sstatus, sr->ifc.serror);
+
+	sr->ifc.scontrol = CDETcomm|CSPDany|CIPMnopartial|CIPMnoslumber;
+	regreadl(&sr->ifc.scontrol);
+	sr->ifc.scontrol &= ~CDETcomm;
+	regreadl(&sr->ifc.scontrol);
+	diprint("after phy reset, sstatus %#lux\n", sr->ifc.sstatus);
+
+	/* we'll get a connected interrupt now if something is connected */
+	/* have to find out if hotplug works for sata 1.x */
+}
+
+static void
+satastartidentify(void)
+{
+	sataclaim();
+	if(waserror()) {
+		sataunclaim();
+		nexterror();
+	}
+	identify();
+	poperror();
+	sataunclaim();
+
+	print("#S/sd01: %q, %lludGiB (%,llud bytes), %s Gb/s\n",
+		disk.model,
+		disk.sectors*512/(1024*1024*1024),
+		disk.sectors*512,
+		(SATA1REG->ifc.sstatus & SSPDgen2) ? "3.0" : "1.5");
+}
+
+static void
+satastart(void*)
+{
+	ulong v;
+
+	for(;;) {
+		diprint("satastart sleep... start %#lux\n", start);
+		sleep(&startr, notzero, &start);
+		diprint("satastart wakeup... start %#lux\n", start);
+
+		ilock(&startil);
+		v = start;
+		start = 0;
+		iunlock(&startil);
+
+		if(!waserror()) {
+			if(v & StartReset)
+				satastartreset();
+			if(v & StartIdentify)
+				satastartidentify();
+			poperror();
+		}
+	}
+}
+
+static void
 satainit(void)
 {
 	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
-	AtaReg *ar = ATA1REG;
-	int n;
-	int i;
 
 	diprint("satainit...\n");
 
+	/* one tag by default, for devices without ncq.  changed in identify(). */
 	tagnext = tagsinuse = 0;
-	for(i = 0; i < nelem(tags); i++)
-		tags[i] = i;
-
-	/* disable interrupts */
-	hr->intrmainena = 0;
-	sr->edma.intreena = 0;
-	sr->ifc.serrintrena = 0;
-	sr->ifc.fisintrena = 0;
+	ntags = 1;
+	tags[0] = 0;
 
 	/* disable & abort edma */
 	sr->edma.cmd = (sr->edma.cmd & ~EdmaEnable) | EdmaAbort;
@@ -673,76 +982,19 @@ satainit(void)
 	sr->edma.respin = 0;
 	sr->edma.respout = (ulong)&resps[0];
 
-	diprint("satainit, reqin %#lux, reqout %#lux\n", sr->edma.reqin, sr->edma.reqout);
-
-if(0) {
-	dprint("ata before reset\n");
-	atadump();
-}
-
-	dprint("sr->ifc.sstatus before edma reset %#lux\n", sr->ifc.sstatus);
-
-	sr->edma.cmd |= Atareset;
-	delay(1);
-	sr->edma.cmd &= ~Atareset;
-	delay(200);
-
-	/* errata magic, to fix the phy.  see uboot code (no docs available).  */
-	sr->ifc.phym3 = (sr->ifc.phym3 & ~0x78100000) | 0x28000000;
-	sr->ifc.phym4 = (sr->ifc.phym4 & ~1) | (1<<16);
-	sr->ifc.phym9g2 = (sr->ifc.phym9g2 & ~0x400f) | 0x00008; /* tx driver amplitude */
-	sr->ifc.phym9g1 = (sr->ifc.phym9g1 & ~0x400f) | 0x00008; /* tx driver amplitude */
-	delay(100);  /* needed? */
-
-	diprint("before phy init, sstatus %#lux, serror %#lux\n", sr->ifc.sstatus, sr->ifc.serror);
-
-	sr->ifc.scontrol = CDETcomm|CSPDany|CIPMnopartial|CIPMnoslumber;
-	regreadl(&sr->ifc.scontrol);
-	delay(1);
-	dprint("sr->ifc.sstatus after phy reset %#lux\n", sr->ifc.sstatus);
-
-	sr->ifc.scontrol &= ~CDETcomm;
-	regreadl(&sr->ifc.scontrol);
-	microdelay(20*1000);
-
-	/* check phy status */
-	n = 0;
-	while((sr->ifc.sstatus & SDETmask) != SDETdevphy) {
-		if(n++ > 200) {
-			dprint("no sata disk attached (sstatus %#lux; serror %#lux), aborting sata init\n", sr->ifc.sstatus, sr->ifc.serror);
-			return;
-		}
-		delay(1);
-	}
-
-	diprint("after phy init, have connection, sstatus %#lux, serror %#lux\n", sr->ifc.sstatus, sr->ifc.serror);
-
-	sr->ifc.ifccfg &= ~Ignorebsy;
-
-	dprint("sr->ifc.sstatus before ata identify %#lux\n", sr->ifc.sstatus);
-
-	/* xxx horrible, should properly wait during command execution, until device no longer busy */
-	i = 0;
-	for(;;) {
-		if((ar->status & (Absy|Adrq)) == 0)
-			break;
-		if(++i == 20) {
-			dprint("disk not ready\n");
-			return;
-		}
-		tsleep(&up->sleep, return0, nil, 100);
-	}
-	if(identify() < 0) {
-		dprint("no disk\n");
-		return;
-	}
-	dprint("#S/sd01: %q, %lludGB (%,llud bytes), sata-i%s\n", disk.model, disk.sectors*512/(1024*1024*1024), disk.sectors*512, (SATA1REG->ifc.sstatus & SSPDgen2) ? "i" : "");
-
-	hr->intrmainena = Sata1err|Sata1done|Sata1dmadone;
+	/* clear & enable interrupts, to get "device connected" interrupts among others */
+	hr->intrmainena = Sata1err|Sata1done;
 	hr->intr = 0;
 	sr->edma.intre = 0;
+	sr->edma.intreena = ~(0UL | Etxlinkmask<<Etxctlshift);
+	sr->ifc.serror = ~0UL;
+	sr->ifc.serrintrena = EN|EX;
+	sr->ifc.fisintrena = 0;
+	sr->ifc.fiscfg = 0;
 
-	diprint("satainit, before edma, hr->intr %#lux, hr->intrmain %#lux, sr->edma.intre %#lux\n", hr->intr, hr->intrmain, sr->edma.intre);
+	start = 0;
+	kproc("satastart", satastart, nil, 0);
+	satakick(StartReset);
 }
 
 static char *dets[] = {"none", "dev", nil, "devphy", "nophy"};
@@ -762,12 +1014,6 @@ static struct {
 	{EX,	"X"},
 };
 
-/* hc intr */
-enum {
-	Dma1done	= 1<<1,
-	Intrcoalesc	= 1<<4,
-	Dev1intr	= 1<<9,
-};
 /* yuck, remove later */
 static ulong
 satadump(char *dst, long n, vlong off)
@@ -789,10 +1035,10 @@ satadump(char *dst, long n, vlong off)
 
 	v = hr->intr;
 	p = seprint(p, e, "hc intr   %#lux\n", v);
-	if(v & Dma1done) p = seprint(p, e, "  dma1done");
-	if(v & Intrcoalesc) p = seprint(p, e, "  intrcoalesc");
-	if(v & Dev1intr) p = seprint(p, e, "  dev1intr");
-	v &= ~(Dma1done|Intrcoalesc|Dev1intr);
+	if(v & Idma1done) p = seprint(p, e, "  dma1done");
+	if(v & Iintrcoalesc) p = seprint(p, e, "  intrcoalesc");
+	if(v & Idevintr1) p = seprint(p, e, "  dev1intr");
+	v &= ~(Idma1done|Iintrcoalesc|Idevintr1);
 	if(v) p = seprint(p, e, "  other: %#lux", v);
 	p = seprint(p, e, "\n");
 
@@ -942,25 +1188,6 @@ if(1) {
 	return n;
 }
 
-static int
-isdone(void *p)
-{
-	ulong *v = p;
-	return *v;
-}
-
-static int
-tagfree(void *)
-{
-	return tagsinuse < nelem(tags);
-}
-
-static long
-min(long a, long b)
-{
-	return (a < b) ? a : b;
-}
-
 static void
 prdfill(Prd *prd, uchar *buf, long n)
 {
@@ -988,6 +1215,7 @@ enum {
 static ulong
 io(int t, void *buf, long nb, vlong off)
 {
+	SatahcReg *hr = SATAHCREG;
 	SataReg *sr = SATA1REG;
 	Req *rq;
 	int i;
@@ -999,6 +1227,7 @@ io(int t, void *buf, long nb, vlong off)
 	ulong lbalo, lbahi;
 	ulong cmds[] = {0x60, 0x61}; /* xxx this is for sata fpdma only, ncq */
 	Prd *prd;
+	char *msg;
 
 	if(disk.valid == 0)
 		error(Enodisk);
@@ -1021,9 +1250,9 @@ io(int t, void *buf, long nb, vlong off)
 
 	qlock(&reqsl);
 
-	sleep(&tagl, tagfree, nil);
+	sleep(&tagr, tagfree, nil);
 	tag = tags[tagnext];
-	tagnext = (tagnext+1)%nelem(tags);
+	tagnext = (tagnext+1)%ntags;
 	tagsinuse++;
 
 	i = reqnext;
@@ -1061,16 +1290,17 @@ io(int t, void *buf, long nb, vlong off)
 	rq->ata[3] = (tag<<3)<<0 | 0<<8;  /* sectors current (tag), previous */
 	dcwbinv(rq, sizeof rq[0]);
 
-	reqsdone[tag] = 0;
+	reqsdone[tag] = Rtimeout;
 	sr->edma.reqin = (ulong)&reqs[reqnext];
 	if((sr->edma.cmd & EdmaEnable) == 0) {
-		/* clear edma intr error, and satahc interrupt dmaXdone */
+		/* xxx check for bsy in ata status register? */
+
+		sr->edma.intre = 0;
+		hr->intr = ~(Sata1err|Sata1done);
 
 		sr->edma.cfg = (sr->edma.cfg & ~ECFGqueue) | ECFGncq;
 
-		sr->ifc.fisintr = ~0;
-		sr->ifc.fisintrena = 0;
-		sr->ifc.fiscfg = (1<<6)-1;
+		sr->ifc.fisintr = 0;
 
 		sr->edma.cmd = EdmaEnable;
 		regreadl(&sr->edma.cmd);
@@ -1078,18 +1308,17 @@ io(int t, void *buf, long nb, vlong off)
 	qunlock(&reqsl);
 
 	/* xxx have to return tag on interrupt? */
-	tsleep(&reqsr[tag], isdone, &reqsdone[tag], 10*1000);
+	tsleep(&reqsr[tag], isdone, &reqsdone[tag], 60*1000);
 
-	if(!reqsdone[tag]) {
+	if(reqsdone[tag] != Rok) {
 		/* xxx should do ata reset, or return the tag back to pool */
-		error(Etimeout);
+		msg = donemsgs[reqsdone[tag]];
+		error(msg);
 	}
 
-	tags[(tagnext-tagsinuse+nelem(tags)) % nelem(tags)] = tag;
+	tags[(tagnext-tagsinuse+ntags) % ntags] = tag;
 	tagsinuse--;
-	wakeup(&tagl);
-
-	/* xxx check for error, raise it */
+	wakeup(&tagr);
 
 	return ns*512;
 }
@@ -1113,10 +1342,21 @@ ctl(char *buf, long n)
 		return n;
 	}
 	if(strcmp(cb->f[0], "identify") == 0) {
-		if(identify() < 0) {
-			error("no disk");
+		sataclaim();
+		if(waserror()) {
+			sataunclaim();
+			nexterror();
 		}
-		dprint("#S/sd01: %q, %lludGB (%,llud bytes), sata-i%s\n", disk.model, disk.sectors*512/(1024*1024*1024), disk.sectors*512, (SATA1REG->ifc.sstatus & SSPDgen2) ? "i" : "");
+
+		identify();
+
+		poperror();
+		sataunclaim();
+
+		return n;
+	}
+	if(strcmp(cb->f[0], "flush") == 0) {
+		flush();
 		return n;
 	}
 	error("bad ctl");
@@ -1125,20 +1365,33 @@ ctl(char *buf, long n)
 
 
 static int
-satagen(Chan *c, char*, Dirtab *, int, int i, Dir *dp)
+satagen(Chan *c, char *name, Dirtab *, int, int s, Dir *dp)
 {
 	Dirtab *tab;
 	int ntab;
+	int i;
 
 	tab = satadir;
-	if(i != DEVDOTDOT){
-		tab = &tab[c->qid.path+1];
-		ntab = 1;
+	ntab = 1;
+	if(s != DEVDOTDOT){
+		tab = &tab[c->qid.path];
+		if(c->qid.type & QTDIR)
+			tab++;
 		if(c->qid.path == Qctlr)
-			ntab = 3;
-		if(i >= ntab)
+			ntab = 2;
+		if(s >= ntab)
 			return -1;
-		tab += i;
+		tab += s;
+	}
+	if(name != nil) {
+		isdir(c);
+		for(i = 0; i < ntab; i++, tab++) {
+			if(strcmp(name, tab->name) == 0) {
+				devdir(c, tab->qid, tab->name, tab->length, eve, tab->perm, dp);
+				return 1;
+			}
+		}
+		return -1;
 	}
 	devdir(c, tab->qid, tab->name, tab->length, eve, tab->perm, dp);
 	return 1;
@@ -1197,6 +1450,8 @@ sataread(Chan *c, void *buf, long n, vlong off)
 		free(s);
 		return n;
 	case Qdata:
+		if(!iseve())
+			error(Eperm);
 		dcwbinv(buf, n);
 		r = 0;
 		while(r < n) {
@@ -1206,8 +1461,6 @@ sataread(Chan *c, void *buf, long n, vlong off)
 			r += nn;
 		}
 		return r;
-	case Qtest:
-		return satadump(buf, n, off);
 	}
 	error(Egreg);
 	return 0;		/* not reached */
@@ -1220,8 +1473,12 @@ satawrite(Chan *c, void *buf, long n, vlong off)
 
 	switch((ulong)c->qid.path){
 	case Qctl:
+		if(!iseve())
+			error(Eperm);
 		return ctl(buf, n);
 	case Qdata:
+		if(!iseve())
+			error(Eperm);
 		dcwbinv(buf, n);
 		r = 0;
 		while(r < n) {
@@ -1231,12 +1488,44 @@ satawrite(Chan *c, void *buf, long n, vlong off)
 			r += nn;
 		}
 		return r;
-	case Qtest:
-		break;
 	}
 	error(Egreg);
 	return 0;		/* not reached */
 }
+
+static int
+satawstat(Chan *c, uchar *dp, int n)
+{
+	Dir *d;
+
+	if(!iseve() || c->qid.path != Qdata)
+		error(Eperm);
+
+	d = smalloc(sizeof(Dir)+n);
+	if(waserror()) {
+		free(d);
+		nexterror();
+	}
+
+	n = convM2D(dp, n, &d[0], (char*)&d[1]);
+	if(n == 0)
+		error(Eshortstat);
+	if(d->mode == ~0UL
+		&& d->atime == ~0UL
+		&& d->mtime == ~0UL
+		&& d->length == ~0ULL
+		&& d->name == nil
+		&& d->uid == nil
+		&& d->gid == nil
+		&& d->muid == nil)
+	{
+		flush();
+		return n;
+	}
+	error(Eperm);
+	return 0;
+}
+
 
 Dev satadevtab = {
 	'S',
@@ -1256,6 +1545,6 @@ Dev satadevtab = {
 	satawrite,
 	devbwrite,
 	devremove,
-	devwstat,
+	satawstat,
 	devpower,
 };

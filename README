@@ -7,10 +7,10 @@ nand flash pages.
 todo:
 - writing kernels to nand (can be done from u-boot, also should be possible from userland):  will implement raw flash device, like flash(3) but with oob data to be read/written too.  then implement a program to write an image (that executes erase and such).
 - better nand support
+- next step for sata support:  improve devbs.c and change devsata.c so it uses it.
 - find & fix crash with latest uboot
 - l2 cache, does not seem to speed up much.  something wrong?
 - delay/microdelay calibration
-- better sata support
 - perform register file read after register writes to different registers
 - lower power.  make sure we don't go into sdram self-refresh when we were just doing something useful.
 - more ethernet (fewer interrupts, more checks for idleness when configuring, phy)
